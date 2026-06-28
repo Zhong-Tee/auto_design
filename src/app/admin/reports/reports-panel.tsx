@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatProfileLabel } from "@/lib/profile";
 import type { Generation, Profile } from "@/types/database";
 
 interface ReportsPanelProps {
@@ -49,6 +50,17 @@ export function ReportsPanel({ generations, profiles }: ReportsPanelProps) {
   const [endDate, setEndDate] = useState("");
   const [userId, setUserId] = useState("all");
 
+  const profileLabels = useMemo(
+    () =>
+      Object.fromEntries(
+        profiles.map((profile) => [profile.id, formatProfileLabel(profile)])
+      ),
+    [profiles]
+  );
+
+  const selectedUserLabel =
+    userId === "all" ? "ทุกคน" : profileLabels[userId] ?? "ทุกคน";
+
   const filtered = useMemo(() => {
     return generations.filter((g) => {
       const created = new Date(g.created_at);
@@ -67,8 +79,7 @@ export function ReportsPanel({ generations, profiles }: ReportsPanelProps) {
     const map = new Map<string, UserSummary>();
 
     for (const gen of filtered) {
-      const profile = profiles.find((p) => p.id === gen.user_id);
-      const label = profile?.display_name || profile?.email || gen.user_id;
+      const label = profileLabels[gen.user_id] ?? gen.user_id;
       const existing = map.get(gen.user_id) ?? {
         userId: gen.user_id,
         label,
@@ -87,7 +98,7 @@ export function ReportsPanel({ generations, profiles }: ReportsPanelProps) {
     return Array.from(map.values()).sort(
       (a, b) => b.totalCostThb - a.totalCostThb
     );
-  }, [filtered, profiles]);
+  }, [filtered, profileLabels]);
 
   const totals = useMemo(() => {
     return {
@@ -143,14 +154,14 @@ export function ReportsPanel({ generations, profiles }: ReportsPanelProps) {
         <div className="space-y-2">
           <Label>ผู้ใช้</Label>
           <Select value={userId} onValueChange={(v) => setUserId(v ?? "all")}>
-            <SelectTrigger>
-              <SelectValue />
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="ทุกคน">{selectedUserLabel}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">ทุกคน</SelectItem>
               {profiles.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
-                  {p.display_name || p.email}
+                  {formatProfileLabel(p)}
                 </SelectItem>
               ))}
             </SelectContent>

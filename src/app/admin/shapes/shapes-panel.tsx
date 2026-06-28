@@ -34,6 +34,7 @@ import {
   QUALITY_OPTIONS,
   formatQualityLabel,
   formatSize,
+  getShapeSizeErrors,
   isExperimentalResolution,
 } from "@/lib/shapes";
 import { saveShape, deleteShape } from "./actions";
@@ -54,6 +55,8 @@ export function ShapesPanel({ initialShapes }: ShapesPanelProps) {
     editing?.quality ?? "medium"
   );
   const [pending, startTransition] = useTransition();
+
+  const sizeErrors = getShapeSizeErrors(width, height);
 
   useEffect(() => {
     setShapes(initialShapes);
@@ -182,7 +185,12 @@ export function ShapesPanel({ initialShapes }: ShapesPanelProps) {
                 />
               </div>
             </div>
-            {isExperimentalResolution(width, height) && (
+            {sizeErrors.length > 0 && (
+              <Alert variant="destructive">
+                <AlertDescription>{sizeErrors.join(" · ")}</AlertDescription>
+              </Alert>
+            )}
+            {sizeErrors.length === 0 && isExperimentalResolution(width, height) && (
               <Alert>
                 <AlertDescription>
                   ความละเอียดเกิน 2K — อาจมีผลลัพธ์ไม่แน่นอน
@@ -222,7 +230,7 @@ export function ShapesPanel({ initialShapes }: ShapesPanelProps) {
                 defaultValue={editing?.is_active !== false ? "true" : "false"}
               />
             </div>
-            <Button type="submit" disabled={pending}>
+            <Button type="submit" disabled={pending || sizeErrors.length > 0}>
               บันทึก
             </Button>
           </form>

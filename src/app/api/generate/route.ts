@@ -9,11 +9,14 @@ import {
   uploadImage,
 } from "@/lib/storage";
 import { buildPricingSettings, calculateCost } from "@/lib/cost";
+import { getShapeSizeErrors } from "@/lib/shapes";
+import { buildOutputFileName, sanitizeOrderNumber } from "@/lib/order-filename";
 
 const generateSchema = z.object({
   productId: z.string().uuid(),
   patternId: z.string().uuid(),
   shapeId: z.string().uuid(),
+  orderNumber: z.string().min(1).max(100),
   texts: z.array(z.string()),
   uploadedImageUrl: z.string().url().optional().nullable(),
 });
@@ -38,8 +41,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "ข้อมูลไม่ถูกต้อง" }, { status: 400 });
     }
 
-    const { productId, patternId, shapeId, texts, uploadedImageUrl } =
+    const { productId, patternId, shapeId, orderNumber, texts, uploadedImageUrl } =
       parsed.data;
+
+    const sanitizedOrder = sanitizeOrderNumber(orderNumber);
+    if (!sanitizedOrder) {
+      return NextResponse.json({ error: "กรุณากรอกเลขออเดอร์" }, { status: 400 });
+    }
+
+    const outputFileName = buildOutputFileName(sanitizedOrder);
 
     const [{ data: pattern }, { data: shape }, { data: settingsRows }] =
       await Promise.all([
@@ -72,6 +82,11 @@ export async function POST(request: Request) {
       );
     }
 
+    const shapeSizeErrors = getShapeSizeErrors(shape.width_px, shape.height_px);
+    if (shapeSizeErrors.length > 0) {
+      return NextResponse.json({ error: shapeSizeErrors[0] }, { status: 400 });
+    }
+
     const promptUsed = fillPromptTemplate(pattern.prompt_template, texts);
     const size = `${shape.width_px}x${shape.height_px}`;
 
@@ -90,6 +105,7 @@ export async function POST(request: Request) {
         model: "gpt-image-2",
         quality: shape.quality,
         size,
+        order_number: sanitizedOrder,
         status: "pending",
       })
       .select("id")
@@ -118,11 +134,12 @@ export async function POST(request: Request) {
       inputImageMimeType: "image/png",
     });
 
-    const outputKey = buildOutputKey(user.id);
+    const outputKey = buildOutputKey(user.id, sanitizedOrder);
     const outputImageUrl = await uploadImage(
       outputKey,
       imageBuffer,
-      "image/png"
+      "image/png",
+      { upsert: true }
     );
 
     const pricing = buildPricingSettings(settingsRows ?? []);
@@ -152,6 +169,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       generationId,
       outputImageUrl,
+      outputFileName,
+      orderNumber: sanitizedOrder,
       promptUsed,
       model,
       usage,

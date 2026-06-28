@@ -15,6 +15,7 @@ export interface Product {
   id: string;
   name: string;
   description: string | null;
+  image_url: string | null;
   text_box_count: number;
   is_active: boolean;
   created_at: string;
@@ -87,6 +88,7 @@ export interface Generation {
   cost_thb: number;
   status: GenerationStatus;
   error_message: string | null;
+  order_number: string | null;
   created_at: string;
 }
 
@@ -107,6 +109,8 @@ export interface TokenUsage {
 export interface GenerationResult {
   generationId: string;
   outputImageUrl: string;
+  outputFileName: string;
+  orderNumber: string;
   usage: TokenUsage;
   costUsd: number;
   costThb: number;

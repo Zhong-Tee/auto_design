@@ -227,7 +227,7 @@
   }
 
   .generate-card {
-    @apply w-full max-w-2xl rounded-4xl border-primary/15 bg-card/90 shadow-xl shadow-primary/10 backdrop-blur-sm;
+    @apply w-full max-w-4xl rounded-4xl border-primary/15 bg-card/90 shadow-xl shadow-primary/10 backdrop-blur-sm;
   }
 
   .generate-actions {

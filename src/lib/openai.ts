@@ -22,6 +22,11 @@ function toUserFacingOpenAIError(error: unknown): Error {
     if (apiError.status === 429) {
       return new Error("OpenAI ใช้งานเกิน quota กรุณาลองใหม่ภายหลัง");
     }
+    if (detail.toLowerCase().includes("minimum pixel budget")) {
+      return new Error(
+        "ขนาดรูปเล็กเกินไป — พิกเซลรวมต้องอย่างน้อย 655,360 (เช่น 576×1152 หรือ 1024×1024)"
+      );
+    }
     if (detail && !detail.toLowerCase().includes("api key")) {
       return new Error(detail);
     }

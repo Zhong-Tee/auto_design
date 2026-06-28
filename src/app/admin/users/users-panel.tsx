@@ -113,9 +113,7 @@ export function UsersAdminPanel() {
       <div className="mb-6 flex items-center justify-between">
         <h1 className="page-title !mb-0">จัดการผู้ใช้</h1>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger>
-            <Button>สร้างผู้ใช้ใหม่</Button>
-          </DialogTrigger>
+          <DialogTrigger render={<Button />}>สร้างผู้ใช้ใหม่</DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>สร้างผู้ใช้ใหม่</DialogTitle>

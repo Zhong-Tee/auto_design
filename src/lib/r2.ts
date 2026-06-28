@@ -1,4 +1,5 @@
 import {
+  DeleteObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -52,6 +53,18 @@ export async function uploadToR2(
   );
 
   return getPublicUrl(key);
+}
+
+export async function deleteFromR2(key: string): Promise<void> {
+  const bucket = process.env.R2_BUCKET_NAME;
+  if (!bucket) throw new Error("R2_BUCKET_NAME is not configured");
+
+  await getS3Client().send(
+    new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    })
+  );
 }
 
 export function buildUploadKey(userId: string): string {

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth/session";
+import { assertValidShapeSize } from "@/lib/shapes";
 
 async function adminClient() {
   await requireAdmin();
@@ -27,6 +28,8 @@ export async function saveShape(formData: FormData) {
   const height_px = parseInt(formData.get("height_px") as string, 10);
   const quality = formData.get("quality") as "low" | "medium" | "high";
   const is_active = formData.get("is_active") === "true";
+
+  assertValidShapeSize(width_px, height_px);
 
   const payload = { name, width_px, height_px, quality, is_active };
 

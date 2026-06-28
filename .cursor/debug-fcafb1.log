@@ -1,0 +1,1 @@
+{"sessionId":"fcafb1","runId":"pre-fix","hypothesisId":"A","location":"users-panel.tsx:mount","message":"nested button scan on users admin mount","data":{"hasDialogTrigger":true,"triggerContainsButton":true,"nestedButtonCount":1,"nestedButtonPaths":[{"innerText":"สร้างผู้ใช้ใหม่","outerSlot":"dialog-trigger"}]},"timestamp":1782660435406}
