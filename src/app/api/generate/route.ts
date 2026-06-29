@@ -9,7 +9,7 @@ import {
   DEFAULT_GENERATION_WIDTH,
 } from "@/lib/shapes";
 import { sanitizeOrderNumber } from "@/lib/order-filename";
-import { processGenerationJob } from "@/lib/process-generation";
+import { kickGenerationQueue } from "@/lib/generation-queue";
 
 const generateSchema = z.object({
   productId: z.string().uuid(),
@@ -43,6 +43,23 @@ export async function POST(request: Request) {
     const sanitizedOrder = sanitizeOrderNumber(orderNumber);
     if (!sanitizedOrder) {
       return NextResponse.json({ error: "กรุณากรอกเลขออเดอร์" }, { status: 400 });
+    }
+
+    const { data: activeDuplicate } = await supabase
+      .from("generations")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("order_number", sanitizedOrder)
+      .in("status", ["pending", "processing"])
+      .limit(1);
+
+    if (activeDuplicate && activeDuplicate.length > 0) {
+      return NextResponse.json(
+        {
+          error: `เลขออเดอร์ "${sanitizedOrder}" กำลังสร้างอยู่แล้ว กรุณาใช้เลขอื่นหรือรอให้เสร็จ`,
+        },
+        { status: 409 }
+      );
     }
 
     const { data: pattern } = await supabase
@@ -106,7 +123,7 @@ export async function POST(request: Request) {
     }
 
     after(async () => {
-      await processGenerationJob(generation.id);
+      await kickGenerationQueue();
     });
 
     return NextResponse.json({

@@ -3,7 +3,7 @@ import type { ShapeQuality } from "@/types/database";
 import { extractTokenUsage } from "@/lib/cost";
 
 const MODEL = "gpt-image-2";
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = 300_000;
 
 function toUserFacingOpenAIError(error: unknown): Error {
   if (error && typeof error === "object" && "status" in error) {

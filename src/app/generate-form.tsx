@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { resolveImageContentType } from "@/lib/image-content-type";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase/client";
 import type { QueuePayload } from "@/lib/generate-queue";
+import { findActiveQueueDuplicate, normalizeOrderNumber } from "@/lib/generate-queue";
 import { GenerateQueuePanel } from "@/app/generate-queue-panel";
 import { useGenerateQueue } from "@/components/generate-queue-provider";
 import type {
@@ -59,6 +61,14 @@ export function GenerateForm({
 
   const selectedProduct = products.find((p) => p.id === productId);
   const selectedPattern = patterns.find((p) => p.id === patternId);
+
+  const queueDuplicate = useMemo(
+    () =>
+      orderNumber.trim()
+        ? findActiveQueueDuplicate(queue, orderNumber)
+        : undefined,
+    [queue, orderNumber]
+  );
 
   const loadMasterData = useCallback(async () => {
     setLoading(true);
@@ -190,7 +200,7 @@ export function GenerateForm({
     setStep(0);
   }
 
-  function handleGenerate() {
+  async function handleGenerate() {
     const trimmedOrder = orderNumber.trim();
     if (!trimmedOrder) {
       toast.error("กรุณากรอกเลขออเดอร์");
@@ -204,6 +214,34 @@ export function GenerateForm({
 
     if (selectedPattern?.requires_image && !uploadedImageUrl) {
       toast.error("กรุณาอัปโหลดรูปคน");
+      return;
+    }
+
+    const sanitizedOrder = normalizeOrderNumber(trimmedOrder);
+    if (!sanitizedOrder) {
+      toast.error("เลขออเดอร์ไม่ถูกต้อง");
+      return;
+    }
+
+    const duplicateInQueue = findActiveQueueDuplicate(queue, trimmedOrder);
+    if (duplicateInQueue) {
+      toast.error(
+        `เลขออเดอร์ "${trimmedOrder}" มีในคิวแล้ว — ใช้เลขอื่นหรือกด "สร้างซ้ำ" จากรายการเดิม`
+      );
+      return;
+    }
+
+    const { data: activeInDb } = await supabase
+      .from("generations")
+      .select("id")
+      .eq("order_number", sanitizedOrder)
+      .in("status", ["pending", "processing"])
+      .limit(1);
+
+    if (activeInDb && activeInDb.length > 0) {
+      toast.error(
+        `เลขออเดอร์ "${trimmedOrder}" กำลังสร้างอยู่ในระบบ กรุณารอให้เสร็จหรือใช้เลขอื่น`
+      );
       return;
     }
 
@@ -304,10 +342,21 @@ export function GenerateForm({
                   ใช้ตั้งชื่อไฟล์รูปเมื่อสร้างเสร็จ (เช่น ORD-2024-001.png)
                 </p>
               </div>
+              {queueDuplicate && (
+                <Alert variant="destructive" className="mx-auto max-w-md">
+                  <AlertDescription>
+                    เลขออเดอร์ &quot;{orderNumber.trim()}&quot; มีในคิวแล้ว
+                    {queueDuplicate.status === "processing"
+                      ? " (กำลังสร้าง)"
+                      : " (สร้างเสร็จแล้ว)"}{" "}
+                    — ใช้เลขอื่นหรือกด &quot;สร้างซ้ำ&quot; จากรายการเดิม
+                  </AlertDescription>
+                </Alert>
+              )}
               <div className="generate-actions">
                 <Button
                   onClick={() => setStep(1)}
-                  disabled={!orderNumber.trim()}
+                  disabled={!orderNumber.trim() || !!queueDuplicate}
                   className="min-w-32"
                 >
                   ถัดไป
@@ -512,10 +561,22 @@ export function GenerateForm({
                   <strong>รูปแบบ:</strong> {selectedPattern?.name}
                 </p>
               </div>
+              {queueDuplicate && (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    เลขออเดอร์ &quot;{orderNumber.trim()}&quot; มีในคิวแล้ว
+                    {queueDuplicate.status === "processing"
+                      ? " (กำลังสร้าง)"
+                      : " (สร้างเสร็จแล้ว)"}{" "}
+                    — ใช้เลขอื่นหรือกด &quot;สร้างซ้ำ&quot; จากรายการเดิม
+                  </AlertDescription>
+                </Alert>
+              )}
               <Button
                 size="lg"
                 className="h-12 w-full text-base"
                 onClick={handleGenerate}
+                disabled={!!queueDuplicate}
               >
                 สร้างรูป
               </Button>

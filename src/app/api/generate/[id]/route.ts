@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { buildOutputFileName } from "@/lib/order-filename";
+import { kickGenerationQueue } from "@/lib/generation-queue";
 
 export async function GET(
   _request: Request,
@@ -35,7 +36,15 @@ export async function GET(
     ? buildOutputFileName(orderNumber)
     : "output.png";
 
-  if (generation.status === "pending") {
+  if (generation.status === "pending" || generation.status === "processing") {
+    const createdAt = new Date(generation.created_at).getTime();
+    const ageMs = Date.now() - createdAt;
+    if (ageMs > 30_000) {
+      after(async () => {
+        await kickGenerationQueue();
+      });
+    }
+
     return NextResponse.json({
       generationId: generation.id,
       status: "pending",

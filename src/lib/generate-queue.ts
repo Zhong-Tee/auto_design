@@ -1,4 +1,5 @@
 import type { GenerationResult, TokenUsage } from "@/types/database";
+import { sanitizeOrderNumber } from "@/lib/order-filename";
 
 export type QueueItemStatus = "processing" | "success" | "failed";
 
@@ -178,4 +179,22 @@ export function groupQueueByDay(
   }
 
   return order.map((label) => ({ label, items: groups.get(label)! }));
+}
+
+export function normalizeOrderNumber(orderNumber: string): string {
+  return sanitizeOrderNumber(orderNumber);
+}
+
+export function findActiveQueueDuplicate(
+  queue: QueueItem[],
+  orderNumber: string
+): QueueItem | undefined {
+  const normalized = normalizeOrderNumber(orderNumber);
+  if (!normalized) return undefined;
+
+  return queue.find(
+    (item) =>
+      (item.status === "processing" || item.status === "success") &&
+      normalizeOrderNumber(item.orderNumber) === normalized
+  );
 }

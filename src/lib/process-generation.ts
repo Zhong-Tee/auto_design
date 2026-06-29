@@ -12,24 +12,28 @@ import {
   DEFAULT_GENERATION_WIDTH,
 } from "@/lib/shapes";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { kickGenerationQueue } from "@/lib/generation-queue";
 
 export async function processGenerationJob(generationId: string): Promise<void> {
   const supabase = createAdminClient();
+  const startedAt = Date.now();
 
-  const { data: generation, error: fetchError } = await supabase
+  const { data: generation, error: claimError } = await supabase
     .from("generations")
-    .select("*")
+    .update({
+      status: "processing",
+      processing_started_at: new Date().toISOString(),
+    })
     .eq("id", generationId)
+    .eq("status", "pending")
+    .select("*")
     .single();
 
-  if (fetchError || !generation) {
-    console.error("Generation not found:", generationId, fetchError);
+  if (claimError || !generation) {
     return;
   }
 
-  if (generation.status !== "pending") {
-    return;
-  }
+  console.info(`[generate] start ${generationId} order=${generation.order_number}`);
 
   try {
     const [{ data: pattern }, { data: settingsRows }] = await Promise.all([
@@ -96,14 +100,22 @@ export async function processGenerationJob(generationId: string): Promise<void> 
         cost_usd: costUsd,
         cost_thb: costThb,
         status: "success",
+        processing_started_at: null,
       })
       .eq("id", generationId);
 
     if (updateError) {
       throw new Error("สร้างรูปสำเร็จแต่บันทึกไม่ครบ");
     }
+
+    console.info(
+      `[generate] success ${generationId} ${Math.round((Date.now() - startedAt) / 1000)}s`
+    );
   } catch (error) {
-    console.error("Generate job failed:", generationId, error);
+    console.error(
+      `[generate] failed ${generationId} ${Math.round((Date.now() - startedAt) / 1000)}s`,
+      error
+    );
     const message =
       error instanceof Error
         ? error.message
@@ -114,7 +126,10 @@ export async function processGenerationJob(generationId: string): Promise<void> 
       .update({
         status: "failed",
         error_message: message,
+        processing_started_at: null,
       })
       .eq("id", generationId);
+  } finally {
+    void kickGenerationQueue();
   }
 }
