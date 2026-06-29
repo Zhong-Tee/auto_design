@@ -79,3 +79,7 @@ export function formatQualityLabel(quality: ShapeQuality): string {
 export function formatSize(width: number, height: number): string {
   return `${width}×${height} px`;
 }
+
+export const DEFAULT_GENERATION_WIDTH = 1024;
+export const DEFAULT_GENERATION_HEIGHT = 1024;
+export const DEFAULT_GENERATION_QUALITY: ShapeQuality = "medium";

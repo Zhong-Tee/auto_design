@@ -2,91 +2,56 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { resolveImageContentType } from "@/lib/image-content-type";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { createClient } from "@/lib/supabase/client";
-import {
-  formatQualityLabel,
-  formatSize,
-  getShapeSizeErrors,
-  isExperimentalResolution,
-  isValidShapeSize,
-} from "@/lib/shapes";
+import type { QueuePayload } from "@/lib/generate-queue";
+import { GenerateQueuePanel } from "@/app/generate-queue-panel";
+import { useGenerateQueue } from "@/components/generate-queue-provider";
 import type {
-  GenerationResult,
   Pattern,
   Product,
-  Shape,
   TextBoxConfig,
-  TokenUsage,
 } from "@/types/database";
 
 const STEPS = [
   "เลขออเดอร์",
   "เลือกสินค้า",
   "เลือกรูปแบบ",
-  "เลือกรูปทรง",
   "กรอกข้อความ",
   "อัปโหลดรูป",
   "สร้างรูป",
   "คิว",
 ];
 
-type QueueItemStatus = "processing" | "success" | "failed";
-
-interface QueueItem {
-  id: string;
-  createdAt: string;
-  orderNumber: string;
-  userName: string;
-  productName: string;
-  patternName: string;
-  shapeLabel: string;
-  status: QueueItemStatus;
-  result?: GenerationResult & { usage: TokenUsage };
-  error?: string;
-}
-
 interface GenerateFormProps {
   initialProducts?: Product[];
-  initialShapes?: Shape[];
   userName?: string;
 }
 
 export function GenerateForm({
   initialProducts = [],
-  initialShapes = [],
   userName = "-",
 }: GenerateFormProps) {
   const supabase = useMemo(() => createClient(), []);
-  const hasInitialData = initialProducts.length > 0 || initialShapes.length > 0;
+  const hasInitialData = initialProducts.length > 0;
+  const { queue, now, enqueueGeneration, retryGeneration } = useGenerateQueue();
 
   const [loading, setLoading] = useState(!hasInitialData);
   const [step, setStep] = useState(0);
-  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [orderNumber, setOrderNumber] = useState("");
 
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [patterns, setPatterns] = useState<Pattern[]>([]);
-  const [shapes, setShapes] = useState<Shape[]>(initialShapes);
   const [textBoxConfigs, setTextBoxConfigs] = useState<TextBoxConfig[]>([]);
 
   const [productId, setProductId] = useState("");
   const [patternId, setPatternId] = useState("");
-  const [shapeId, setShapeId] = useState("");
   const [texts, setTexts] = useState<string[]>([]);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
@@ -94,27 +59,25 @@ export function GenerateForm({
 
   const selectedProduct = products.find((p) => p.id === productId);
   const selectedPattern = patterns.find((p) => p.id === patternId);
-  const selectedShape = shapes.find((s) => s.id === shapeId);
 
   const loadMasterData = useCallback(async () => {
     setLoading(true);
-    const [productsRes, shapesRes] = await Promise.all([
-      supabase.from("products").select("*").eq("is_active", true).order("name"),
-      supabase.from("shapes").select("*").eq("is_active", true).order("name"),
-    ]);
+    const productsRes = await supabase
+      .from("products")
+      .select("*")
+      .eq("is_active", true)
+      .order("name");
 
     setProducts(productsRes.data ?? []);
-    setShapes(shapesRes.data ?? []);
     setLoading(false);
   }, [supabase]);
 
   useEffect(() => {
     setProducts(initialProducts);
-    setShapes(initialShapes);
-    if (initialProducts.length > 0 || initialShapes.length > 0) {
+    if (initialProducts.length > 0) {
       setLoading(false);
     }
-  }, [initialProducts, initialShapes]);
+  }, [initialProducts]);
 
   useEffect(() => {
     if (hasInitialData) return;
@@ -140,7 +103,7 @@ export function GenerateForm({
           .select("*")
           .eq("product_id", productId)
           .eq("is_active", true)
-          .order("name"),
+          .order("sort_order"),
         supabase
           .from("text_box_configs")
           .select("*")
@@ -174,7 +137,7 @@ export function GenerateForm({
         .select("*")
         .eq("product_id", productId)
         .eq("is_active", true)
-        .order("name");
+        .order("sort_order");
 
       if (cancelled) return;
       setPatterns(data ?? []);
@@ -217,14 +180,24 @@ export function GenerateForm({
     setUploading(false);
   }
 
-  async function handleGenerate() {
+  function resetFormForNewGeneration() {
+    setOrderNumber("");
+    setProductId("");
+    setPatternId("");
+    setTexts([]);
+    setUploadedImageUrl(null);
+    setUploadPreview(null);
+    setStep(0);
+  }
+
+  function handleGenerate() {
     const trimmedOrder = orderNumber.trim();
     if (!trimmedOrder) {
       toast.error("กรุณากรอกเลขออเดอร์");
       return;
     }
 
-    if (!productId || !patternId || !shapeId) {
+    if (!productId || !patternId) {
       toast.error("กรุณาเลือกข้อมูลให้ครบ");
       return;
     }
@@ -234,87 +207,24 @@ export function GenerateForm({
       return;
     }
 
-    const queueId = crypto.randomUUID();
-    const queueItem: QueueItem = {
-      id: queueId,
-      createdAt: new Date().toISOString(),
-      orderNumber: trimmedOrder,
-      userName,
-      productName: selectedProduct?.name ?? "-",
-      patternName: selectedPattern?.name ?? "-",
-      shapeLabel: selectedShape
-        ? `${selectedShape.name} (${formatSize(selectedShape.width_px, selectedShape.height_px)})`
-        : "-",
-      status: "processing",
-    };
-
-    setQueue((prev) => [queueItem, ...prev]);
-    setStep(7);
-    toast.info("เพิ่มในคิวแล้ว กำลังสร้างรูป...");
-
-    const payload = {
+    const payload: QueuePayload = {
       productId,
       patternId,
-      shapeId,
       orderNumber: trimmedOrder,
       texts,
       uploadedImageUrl,
     };
 
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+    enqueueGeneration({
+      orderNumber: trimmedOrder,
+      userName,
+      productName: selectedProduct?.name ?? "-",
+      patternName: selectedPattern?.name ?? "-",
+      payload,
+    });
 
-      const data = await res.json();
-
-      if (res.ok) {
-        setQueue((prev) =>
-          prev.map((item) =>
-            item.id === queueId
-              ? { ...item, status: "success", result: data }
-              : item
-          )
-        );
-        toast.success("สร้างรูปสำเร็จ");
-      } else {
-        setQueue((prev) =>
-          prev.map((item) =>
-            item.id === queueId
-              ? {
-                  ...item,
-                  status: "failed",
-                  error: data.error || "สร้างรูปไม่สำเร็จ",
-                }
-              : item
-          )
-        );
-        toast.error(data.error || "สร้างรูปไม่สำเร็จ");
-      }
-    } catch {
-      setQueue((prev) =>
-        prev.map((item) =>
-          item.id === queueId
-            ? { ...item, status: "failed", error: "สร้างรูปไม่สำเร็จ กรุณาลองใหม่" }
-            : item
-        )
-      );
-      toast.error("สร้างรูปไม่สำเร็จ กรุณาลองใหม่");
-    }
-  }
-
-  function getQueueStatusLabel(status: QueueItemStatus) {
-    if (status === "processing") return "กำลังสร้าง";
-    if (status === "success") return "สำเร็จ";
-    return "ล้มเหลว";
-  }
-
-  function getQueueStatusVariant(status: QueueItemStatus) {
-    if (status === "success") return "default" as const;
-    if (status === "failed") return "destructive" as const;
-    return "secondary" as const;
+    toast.info("เพิ่มในคิวแล้ว สามารถสร้างรายการใหม่หรือไปหน้าอื่นได้");
+    resetFormForNewGeneration();
   }
 
   function getTextBoxLabel(index: number) {
@@ -349,7 +259,7 @@ export function GenerateForm({
       <div className="generate-hero">
         <h1 className="page-title !mb-2">สร้างรูป AI</h1>
         <p className="text-base text-muted-foreground sm:text-lg">
-          เลือกสินค้า รูปแบบ และรูปทรง แล้วสร้างภาพ PNG คุณภาพสูง
+          เลือกสินค้าและรูปแบบ แล้วสร้างภาพ PNG คุณภาพสูง
         </p>
       </div>
 
@@ -364,7 +274,7 @@ export function GenerateForm({
             }`}
           >
             {i + 1}. {label}
-            {i === 7 && queue.length > 0 && (
+            {i === 6 && queue.length > 0 && (
               <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-xs font-semibold text-accent-foreground">
                 {queue.filter((q) => q.status === "processing").length || queue.length}
               </span>
@@ -511,82 +421,13 @@ export function GenerateForm({
 
           {step === 3 && (
             <>
-              {shapes.length === 0 ? (
-                <p className="text-muted-foreground">ยังไม่มีรูปทรง</p>
-              ) : (
-                <div className="mx-auto w-full max-w-md space-y-2">
-                  <Label>รูปทรง / ความละเอียด</Label>
-                  <Select value={shapeId} onValueChange={(v) => setShapeId(v ?? "")}>
-                    <SelectTrigger className="h-11 w-full">
-                      <SelectValue placeholder="เลือกรูปทรง">
-                        {selectedShape
-                          ? `${selectedShape.name} — ${formatSize(selectedShape.width_px, selectedShape.height_px)}`
-                          : undefined}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {shapes.map((shape) => (
-                        <SelectItem key={shape.id} value={shape.id}>
-                          {shape.name} — {formatSize(shape.width_px, shape.height_px)} —{" "}
-                          {formatQualityLabel(shape.quality)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              {selectedShape &&
-                getShapeSizeErrors(
-                  selectedShape.width_px,
-                  selectedShape.height_px
-                ).map((message) => (
-                  <Alert key={message} variant="destructive">
-                    <AlertDescription>{message}</AlertDescription>
-                  </Alert>
-                ))}
-              {selectedShape &&
-                isValidShapeSize(selectedShape.width_px, selectedShape.height_px) &&
-                isExperimentalResolution(
-                  selectedShape.width_px,
-                  selectedShape.height_px
-                ) && (
-                  <Alert>
-                    <AlertDescription>
-                      ความละเอียดเกิน 2K — อาจมีผลลัพธ์ไม่แน่นอน
-                    </AlertDescription>
-                  </Alert>
-                )}
-              <div className="generate-actions">
-                <Button variant="outline" onClick={() => setStep(2)}>
-                  ย้อนกลับ
-                </Button>
-                <Button
-                  onClick={() => setStep(4)}
-                  disabled={
-                    !shapeId ||
-                    (selectedShape
-                      ? getShapeSizeErrors(
-                          selectedShape.width_px,
-                          selectedShape.height_px
-                        ).length > 0
-                      : false)
-                  }
-                  className="min-w-32"
-                >
-                  ถัดไป
-                </Button>
-              </div>
-            </>
-          )}
-
-          {step === 4 && (
-            <>
               <div className="mx-auto w-full max-w-md space-y-4">
               {texts.map((text, index) => (
                 <div key={index} className="space-y-2">
                   <Label>{getTextBoxLabel(index)}</Label>
-                  <Input
-                    className="h-11"
+                  <Textarea
+                    className="min-h-16 resize-none py-3 leading-loose [field-sizing:fixed]"
+                    rows={2}
                     value={text}
                     onChange={(e) => {
                       const next = [...texts];
@@ -600,12 +441,12 @@ export function GenerateForm({
               ))}
               </div>
               <div className="generate-actions">
-                <Button variant="outline" onClick={() => setStep(3)}>
+                <Button variant="outline" onClick={() => setStep(2)}>
                   ย้อนกลับ
                 </Button>
                 <Button
                   onClick={() =>
-                    setStep(selectedPattern?.requires_image ? 5 : 6)
+                    setStep(selectedPattern?.requires_image ? 4 : 5)
                   }
                   className="min-w-32"
                 >
@@ -615,7 +456,7 @@ export function GenerateForm({
             </>
           )}
 
-          {step === 5 && selectedPattern?.requires_image && (
+          {step === 4 && selectedPattern?.requires_image && (
             <>
               <div className="mx-auto w-full max-w-md space-y-4">
                 <div className="space-y-2">
@@ -641,17 +482,17 @@ export function GenerateForm({
                 )}
               </div>
               <div className="generate-actions">
-                <Button variant="outline" onClick={() => setStep(4)}>
+                <Button variant="outline" onClick={() => setStep(3)}>
                   ย้อนกลับ
                 </Button>
-                <Button onClick={() => setStep(6)} disabled={!uploadedImageUrl} className="min-w-32">
+                <Button onClick={() => setStep(5)} disabled={!uploadedImageUrl} className="min-w-32">
                   ถัดไป
                 </Button>
               </div>
             </>
           )}
 
-          {step === 6 && (
+          {step === 5 && (
             <>
               <div className="mx-auto w-full max-w-md space-y-4">
               <div className="rounded-xl bg-muted/80 p-4 text-base">
@@ -670,12 +511,6 @@ export function GenerateForm({
                 <p>
                   <strong>รูปแบบ:</strong> {selectedPattern?.name}
                 </p>
-                <p>
-                  <strong>รูปทรง:</strong>{" "}
-                  {selectedShape
-                    ? `${selectedShape.name} (${formatSize(selectedShape.width_px, selectedShape.height_px)})`
-                    : "-"}
-                </p>
               </div>
               <Button
                 size="lg"
@@ -687,12 +522,12 @@ export function GenerateForm({
               </div>
               <div className="generate-actions">
               {!selectedPattern?.requires_image && (
-                <Button variant="outline" onClick={() => setStep(4)}>
+                <Button variant="outline" onClick={() => setStep(3)}>
                   ย้อนกลับ
                 </Button>
               )}
               {selectedPattern?.requires_image && (
-                <Button variant="outline" onClick={() => setStep(5)}>
+                <Button variant="outline" onClick={() => setStep(4)}>
                   ย้อนกลับ
                 </Button>
               )}
@@ -700,103 +535,15 @@ export function GenerateForm({
             </>
           )}
 
-          {step === 7 && (
+          {step === 6 && (
             <>
-              {queue.length === 0 ? (
-                <p className="text-center text-muted-foreground">
-                  ยังไม่มีรายการในคิว — กด &quot;สร้างรูป&quot; ที่ขั้นตอนที่ 6
-                  เพื่อเพิ่มรายการ
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  {queue.map((item) => (
-                    <div
-                      key={item.id}
-                      className="rounded-xl border bg-muted/30 p-4 space-y-3"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm text-muted-foreground">
-                          {new Date(item.createdAt).toLocaleString("th-TH")}
-                        </p>
-                        <Badge variant={getQueueStatusVariant(item.status)}>
-                          {getQueueStatusLabel(item.status)}
-                        </Badge>
-                      </div>
-                      <div className="text-sm">
-                        <p>
-                          <strong>ผู้สร้าง:</strong> {item.userName}
-                        </p>
-                        <p>
-                          <strong>เลขออเดอร์:</strong> {item.orderNumber}
-                        </p>
-                        <p>
-                          <strong>ชื่อไฟล์:</strong>{" "}
-                          {item.result?.outputFileName ?? `${item.orderNumber}.png`}
-                        </p>
-                        <p>
-                          <strong>สินค้า:</strong> {item.productName}
-                        </p>
-                        <p>
-                          <strong>รูปแบบ:</strong> {item.patternName}
-                        </p>
-                        <p>
-                          <strong>รูปทรง:</strong> {item.shapeLabel}
-                        </p>
-                      </div>
-
-                      {item.status === "processing" && (
-                        <div className="flex h-40 items-center justify-center rounded-lg border bg-muted/50">
-                          <p className="text-sm text-muted-foreground animate-pulse">
-                            กำลังสร้างรูป...
-                          </p>
-                        </div>
-                      )}
-
-                      {item.status === "failed" && (
-                        <div className="flex h-24 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/5 px-4 text-center text-sm text-destructive">
-                          {item.error || "สร้างรูปไม่สำเร็จ"}
-                        </div>
-                      )}
-
-                      {item.status === "success" && item.result && (
-                        <>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={item.result.outputImageUrl}
-                            alt="ผลลัพธ์"
-                            className="mx-auto max-h-64 rounded-lg border"
-                          />
-                          <div className="generate-actions">
-                            <a
-                              href={item.result.outputImageUrl}
-                              download={
-                                item.result.outputFileName ??
-                                `${item.orderNumber}.png`
-                              }
-                              target="_blank"
-                              rel="noreferrer"
-                              className={buttonVariants({ size: "sm" })}
-                            >
-                              ดาวน์โหลด {item.result.outputFileName ?? `${item.orderNumber}.png`}
-                            </a>
-                          </div>
-                          <div className="rounded-xl border bg-muted/50 p-3 text-sm">
-                            <p>
-                              Token รวม:{" "}
-                              {item.result.usage.total_tokens.toLocaleString()}
-                            </p>
-                            <p className="mt-1 font-semibold">
-                              ค่าใช้จ่าย: {item.result.costThbDisplay} บาท
-                            </p>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+              <GenerateQueuePanel
+                queue={queue}
+                now={now}
+                onRetry={retryGeneration}
+              />
               <div className="generate-actions">
-                <Button variant="outline" onClick={() => setStep(6)}>
+                <Button variant="outline" onClick={() => setStep(5)}>
                   กลับ
                 </Button>
                 <Button onClick={() => setStep(0)} className="min-w-32">

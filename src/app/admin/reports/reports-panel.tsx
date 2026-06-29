@@ -45,6 +45,61 @@ interface UserSummary {
   totalCostThb: number;
 }
 
+interface DailySummary {
+  date: string;
+  label: string;
+  count: number;
+  totalTokens: number;
+  totalCostThb: number;
+}
+
+function toDateKey(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-CA");
+}
+
+function formatDayLabel(dateKey: string): string {
+  return new Date(`${dateKey}T00:00:00`).toLocaleDateString("th-TH", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function eachDayInRange(startKey: string, endKey: string): string[] {
+  const days: string[] = [];
+  const current = new Date(`${startKey}T00:00:00`);
+  const end = new Date(`${endKey}T00:00:00`);
+
+  while (current <= end) {
+    days.push(current.toLocaleDateString("en-CA"));
+    current.setDate(current.getDate() + 1);
+  }
+
+  return days;
+}
+
+function getDailyChartRange(
+  filtered: Generation[],
+  startDate: string,
+  endDate: string
+): { startKey: string; endKey: string } | null {
+  if (startDate && endDate) {
+    return { startKey: startDate, endKey: endDate };
+  }
+
+  if (filtered.length === 0) {
+    return null;
+  }
+
+  const dateKeys = filtered
+    .map((gen) => toDateKey(gen.created_at))
+    .sort();
+
+  return {
+    startKey: startDate || dateKeys[0],
+    endKey: endDate || dateKeys[dateKeys.length - 1],
+  };
+}
+
 export function ReportsPanel({ generations, profiles }: ReportsPanelProps) {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -107,6 +162,35 @@ export function ReportsPanel({ generations, profiles }: ReportsPanelProps) {
       cost: filtered.reduce((s, g) => s + Number(g.cost_thb), 0),
     };
   }, [filtered]);
+
+  const dailySummaries = useMemo(() => {
+    const range = getDailyChartRange(filtered, startDate, endDate);
+    if (!range) return [];
+
+    const map = new Map<string, DailySummary>();
+
+    for (const day of eachDayInRange(range.startKey, range.endKey)) {
+      map.set(day, {
+        date: day,
+        label: formatDayLabel(day),
+        count: 0,
+        totalTokens: 0,
+        totalCostThb: 0,
+      });
+    }
+
+    for (const gen of filtered) {
+      const day = toDateKey(gen.created_at);
+      const existing = map.get(day);
+      if (!existing) continue;
+
+      existing.count += 1;
+      existing.totalTokens += gen.total_tokens;
+      existing.totalCostThb += Number(gen.cost_thb);
+    }
+
+    return Array.from(map.values());
+  }, [filtered, startDate, endDate]);
 
   function exportCsv() {
     const header = "ผู้ใช้,จำนวนรูป,Total Tokens,ค่าใช้จ่าย (บาท)\n";
@@ -206,25 +290,53 @@ export function ReportsPanel({ generations, profiles }: ReportsPanelProps) {
         </Card>
       </div>
 
-      {summaries.length > 0 && (
+      {dailySummaries.length > 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>กราฟค่าใช้จ่ายต่อผู้ใช้</CardTitle>
+            <CardTitle>กราฟการสร้างรูปรายวัน</CardTitle>
           </CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={summaries}>
+              <BarChart data={dailySummaries}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                <YAxis />
-                <Tooltip
-                  formatter={(value) =>
-                    typeof value === "number"
-                      ? `${value.toFixed(2)} บาท`
-                      : value
-                  }
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 12 }}
+                  interval={dailySummaries.length > 14 ? "preserveStartEnd" : 0}
+                  angle={dailySummaries.length > 10 ? -35 : 0}
+                  textAnchor={dailySummaries.length > 10 ? "end" : "middle"}
+                  height={dailySummaries.length > 10 ? 60 : 30}
                 />
-                <Bar dataKey="totalCostThb" fill="oklch(0.52 0.16 255)" radius={[6, 6, 0, 0]} />
+                <YAxis allowDecimals={false} />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.[0]) return null;
+                    const item = payload[0].payload as DailySummary;
+                    return (
+                      <div className="rounded-lg border bg-background p-3 text-sm shadow-md">
+                        <p className="font-medium">
+                          {new Date(`${item.date}T00:00:00`).toLocaleDateString(
+                            "th-TH",
+                            {
+                              weekday: "long",
+                              day: "numeric",
+                              month: "long",
+                              year: "numeric",
+                            }
+                          )}
+                        </p>
+                        <p className="mt-1">จำนวนรูป: {item.count}</p>
+                        <p>Token รวม: {item.totalTokens.toLocaleString()}</p>
+                        <p>ค่าใช้จ่าย: {item.totalCostThb.toFixed(2)} บาท</p>
+                      </div>
+                    );
+                  }}
+                />
+                <Bar
+                  dataKey="count"
+                  fill="oklch(0.52 0.16 255)"
+                  radius={[6, 6, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>

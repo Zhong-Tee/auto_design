@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getPlaceholderHints } from "@/lib/prompt";
-import { savePattern, deletePattern } from "./actions";
+import { savePattern, deletePattern, reorderPattern } from "./actions";
 import type { Pattern, Product, Prompt } from "@/types/database";
 
 type PatternRow = Pattern & { products: { name: string } | null };
@@ -52,29 +53,90 @@ export function PatternsPanel({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<PatternRow | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
-  const [selectedProductId, setSelectedProductId] = useState("");
+  const [filterProductId, setFilterProductId] = useState("all");
+  const [formProductId, setFormProductId] = useState("");
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
     setPatterns(initialPatterns);
   }, [initialPatterns]);
 
-  const selectedProduct = products.find((p) => p.id === selectedProductId);
+  const formProduct = products.find((p) => p.id === formProductId);
+  const filterProduct = products.find((p) => p.id === filterProductId);
+
+  const sortedPatterns = useMemo(
+    () =>
+      [...patterns]
+        .filter(
+          (pattern) =>
+            filterProductId === "all" || pattern.product_id === filterProductId
+        )
+        .sort((a, b) => a.sort_order - b.sort_order),
+    [patterns, filterProductId]
+  );
+
+  const productPatternCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const pattern of patterns) {
+      counts.set(pattern.product_id, (counts.get(pattern.product_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [patterns]);
+
+  function canMoveUp(pattern: PatternRow) {
+    const sameProduct = sortedPatterns.filter((p) => p.product_id === pattern.product_id);
+    return sameProduct[0]?.id !== pattern.id;
+  }
+
+  function canMoveDown(pattern: PatternRow) {
+    const sameProduct = sortedPatterns.filter((p) => p.product_id === pattern.product_id);
+    return sameProduct[sameProduct.length - 1]?.id !== pattern.id;
+  }
+
+  function handleReorder(pattern: PatternRow, direction: "up" | "down") {
+    startTransition(async () => {
+      try {
+        await reorderPattern(pattern.id, direction);
+        setPatterns((prev) => {
+          const sameProduct = [...prev]
+            .filter((p) => p.product_id === pattern.product_id)
+            .sort((a, b) => a.sort_order - b.sort_order);
+          const index = sameProduct.findIndex((p) => p.id === pattern.id);
+          const swapIndex = direction === "up" ? index - 1 : index + 1;
+          const current = sameProduct[index];
+          const neighbor = sameProduct[swapIndex];
+          if (!current || !neighbor) return prev;
+
+          return prev.map((p) => {
+            if (p.id === current.id) return { ...p, sort_order: neighbor.sort_order };
+            if (p.id === neighbor.id) return { ...p, sort_order: current.sort_order };
+            return p;
+          });
+        });
+        router.refresh();
+        toast.success("อัปเดตลำดับสำเร็จ");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "อัปเดตลำดับไม่สำเร็จ");
+      }
+    });
+  }
 
   function openCreate() {
     setEditing(null);
-    setSelectedProductId(products[0]?.id ?? "");
+    setFormProductId(
+      filterProductId !== "all" ? filterProductId : (products[0]?.id ?? "")
+    );
     setOpen(true);
   }
 
   function openEdit(pattern: PatternRow) {
     setEditing(pattern);
-    setSelectedProductId(pattern.product_id);
+    setFormProductId(pattern.product_id);
     setOpen(true);
   }
 
   function handleSave(formData: FormData) {
-    formData.set("product_id", selectedProductId);
+    formData.set("product_id", formProductId);
     startTransition(async () => {
       try {
         await savePattern(formData);
@@ -99,20 +161,51 @@ export function PatternsPanel({
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="page-title !mb-0">จัดการรูปแบบ</h1>
         <Button onClick={openCreate} disabled={products.length === 0}>
           เพิ่มรูปแบบ
         </Button>
       </div>
 
+      {products.length > 0 && (
+        <div className="mb-4 flex max-w-xs flex-col gap-2">
+          <Label htmlFor="pattern-product-filter">สินค้า</Label>
+          <Select
+            value={filterProductId}
+            onValueChange={(v) => setFilterProductId(v ?? "all")}
+          >
+            <SelectTrigger id="pattern-product-filter" className="w-full">
+              <SelectValue placeholder="เลือกสินค้า">
+                {filterProductId === "all"
+                  ? "ทั้งหมด"
+                  : filterProduct?.name}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">ทั้งหมด</SelectItem>
+              {products.map((product) => (
+                <SelectItem key={product.id} value={product.id}>
+                  {product.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {patterns.length === 0 ? (
         <p className="text-muted-foreground">ยังไม่มีรูปแบบ</p>
+      ) : sortedPatterns.length === 0 ? (
+        <p className="text-muted-foreground">
+          ไม่มีรูปแบบสำหรับสินค้านี้
+        </p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-28">ลำดับ</TableHead>
                 <TableHead>ชื่อ</TableHead>
                 <TableHead>สินค้า</TableHead>
                 <TableHead>ต้องมีรูป</TableHead>
@@ -121,8 +214,43 @@ export function PatternsPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {patterns.map((pattern) => (
+              {sortedPatterns.map((pattern) => (
                 <TableRow key={pattern.id}>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <span className="w-6 text-center text-sm text-muted-foreground">
+                        {pattern.sort_order}
+                      </span>
+                      <div className="flex flex-col gap-0.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="size-7"
+                          disabled={pending || !canMoveUp(pattern)}
+                          onClick={() => handleReorder(pattern, "up")}
+                          aria-label={`เลื่อน ${pattern.name} ขึ้น`}
+                        >
+                          <ChevronUpIcon className="size-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="size-7"
+                          disabled={
+                            pending ||
+                            !canMoveDown(pattern) ||
+                            (productPatternCounts.get(pattern.product_id) ?? 0) <= 1
+                          }
+                          onClick={() => handleReorder(pattern, "down")}
+                          aria-label={`เลื่อน ${pattern.name} ลง`}
+                        >
+                          <ChevronDownIcon className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </TableCell>
                   <TableCell>{pattern.name}</TableCell>
                   <TableCell>{pattern.products?.name ?? "-"}</TableCell>
                   <TableCell>{pattern.requires_image ? "ใช่" : "ไม่"}</TableCell>
@@ -168,12 +296,12 @@ export function PatternsPanel({
             <div className="space-y-2">
               <Label>สินค้า</Label>
               <Select
-                value={selectedProductId}
-                onValueChange={(v) => setSelectedProductId(v ?? "")}
+                value={formProductId}
+                onValueChange={(v) => setFormProductId(v ?? "")}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="เลือกสินค้า">
-                    {selectedProduct?.name}
+                    {formProduct?.name}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
@@ -212,10 +340,10 @@ export function PatternsPanel({
                 required
                 className="[field-sizing:fixed] max-h-48 overflow-y-auto"
               />
-              {selectedProduct && (
+              {formProduct && (
                 <p className="text-xs text-muted-foreground">
                   Placeholder ที่ใช้ได้:{" "}
-                  {getPlaceholderHints(selectedProduct.text_box_count).join(", ")}
+                  {getPlaceholderHints(formProduct.text_box_count).join(", ")}
                 </p>
               )}
             </div>
@@ -253,7 +381,7 @@ export function PatternsPanel({
                 defaultValue={editing?.is_active !== false ? "true" : "false"}
               />
             </div>
-            <Button type="submit" disabled={pending || !selectedProductId}>
+            <Button type="submit" disabled={pending || !formProductId}>
               บันทึก
             </Button>
           </form>

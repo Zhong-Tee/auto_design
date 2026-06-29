@@ -14,7 +14,8 @@ export async function getPatterns() {
   const { data, error } = await supabase
     .from("patterns")
     .select("*, products(name)")
-    .order("created_at", { ascending: false });
+    .order("product_id")
+    .order("sort_order");
   if (error) throw new Error(error.message);
   return data;
 }
@@ -60,11 +61,71 @@ export async function savePattern(formData: FormData) {
     const { error } = await supabase.from("patterns").update(payload).eq("id", id);
     if (error) throw new Error(error.message);
   } else {
-    const { error } = await supabase.from("patterns").insert(payload);
+    const { data: maxRow } = await supabase
+      .from("patterns")
+      .select("sort_order")
+      .eq("product_id", product_id)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { error } = await supabase.from("patterns").insert({
+      ...payload,
+      sort_order: (maxRow?.sort_order ?? 0) + 1,
+    });
     if (error) throw new Error(error.message);
   }
 
   revalidatePath("/admin/patterns");
+}
+
+export async function reorderPattern(id: string, direction: "up" | "down") {
+  const supabase = await adminClient();
+
+  const { data: current, error: currentError } = await supabase
+    .from("patterns")
+    .select("id, product_id, sort_order")
+    .eq("id", id)
+    .single();
+
+  if (currentError || !current) {
+    throw new Error("ไม่พบรูปแบบ");
+  }
+
+  let neighborQuery = supabase
+    .from("patterns")
+    .select("id, sort_order")
+    .eq("product_id", current.product_id);
+
+  neighborQuery =
+    direction === "up"
+      ? neighborQuery.lt("sort_order", current.sort_order)
+      : neighborQuery.gt("sort_order", current.sort_order);
+
+  const { data: neighbor, error: neighborError } = await neighborQuery
+    .order("sort_order", { ascending: direction === "up" ? false : true })
+    .limit(1)
+    .maybeSingle();
+
+  if (neighborError) throw new Error(neighborError.message);
+  if (!neighbor) return;
+
+  const { error: updateCurrentError } = await supabase
+    .from("patterns")
+    .update({ sort_order: neighbor.sort_order })
+    .eq("id", current.id);
+
+  if (updateCurrentError) throw new Error(updateCurrentError.message);
+
+  const { error: updateNeighborError } = await supabase
+    .from("patterns")
+    .update({ sort_order: current.sort_order })
+    .eq("id", neighbor.id);
+
+  if (updateNeighborError) throw new Error(updateNeighborError.message);
+
+  revalidatePath("/admin/patterns");
+  revalidatePath("/");
 }
 
 export async function deletePattern(id: string) {
