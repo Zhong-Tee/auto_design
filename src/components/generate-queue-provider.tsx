@@ -54,12 +54,7 @@ export function GenerateQueueProvider({
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueHydrated, setQueueHydrated] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const queueRef = useRef<QueueItem[]>([]);
   const submittedRef = useRef(new Set<string>());
-
-  useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
 
   useEffect(() => {
     setQueue(loadQueueFromStorage());
@@ -95,10 +90,16 @@ export function GenerateQueueProvider({
     if (!processingGenerationIds) return;
 
     async function pollGeneration(generationId: string) {
-      const res = await fetch(`/api/generate/${generationId}`);
-      const data = (await res.json()) as GenerationStatusResponse & {
-        error?: string;
-      };
+      let res: Response;
+      let data: GenerationStatusResponse & { error?: string };
+      try {
+        res = await fetch(`/api/generate/${generationId}`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        data = await res.json();
+      } catch {
+        return;
+      }
 
       if (!res.ok) return;
 
@@ -134,16 +135,16 @@ export function GenerateQueueProvider({
     return () => window.clearInterval(intervalId);
   }, [processingGenerationIds]);
 
-  const submitGeneration = useCallback(async (queueId: string) => {
+  const submitGeneration = useCallback(async (item: QueueItem) => {
+    const queueId = item.id;
     submittedRef.current.add(queueId);
-    const item = queueRef.current.find((entry) => entry.id === queueId);
-    if (!item) return;
 
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(item.payload),
+        signal: AbortSignal.timeout(60_000),
       });
       const data = await res.json();
 
@@ -176,7 +177,13 @@ export function GenerateQueueProvider({
             : entry
         )
       );
-    } catch {
+    } catch (err) {
+      const timedOut =
+        err instanceof DOMException &&
+        (err.name === "TimeoutError" || err.name === "AbortError");
+      const message = timedOut
+        ? "ส่งคำขอนานเกินไป (เซิร์ฟเวอร์ไม่ตอบสนอง) — กด \"สร้างซ้ำ\" เพื่อลองใหม่"
+        : "ส่งคำขอสร้างรูปไม่สำเร็จ กรุณาลองใหม่";
       const completedAt = new Date().toISOString();
       setQueue((prev) =>
         prev.map((entry) =>
@@ -185,12 +192,12 @@ export function GenerateQueueProvider({
                 ...entry,
                 status: "failed",
                 completedAt,
-                error: "ส่งคำขอสร้างรูปไม่สำเร็จ กรุณาลองใหม่",
+                error: message,
               }
             : entry
         )
       );
-      toast.error("ส่งคำขอสร้างรูปไม่สำเร็จ กรุณาลองใหม่");
+      toast.error(message);
     }
   }, []);
 
@@ -211,7 +218,7 @@ export function GenerateQueueProvider({
       };
 
       setQueue((prev) => [queueItem, ...prev]);
-      void submitGeneration(queueId);
+      void submitGeneration(queueItem);
       return queueId;
     },
     [submitGeneration]
@@ -235,7 +242,7 @@ export function GenerateQueueProvider({
 
       setQueue((prev) => [queueItem, ...prev]);
       toast.info(`เพิ่ม ${source.orderNumber} ในคิวแล้ว กำลังสร้างรูป...`);
-      void submitGeneration(queueId);
+      void submitGeneration(queueItem);
       return queueId;
     },
     [submitGeneration]
@@ -247,7 +254,7 @@ export function GenerateQueueProvider({
     for (const item of queue) {
       if (item.status !== "processing" || item.generationId) continue;
       if (submittedRef.current.has(item.id)) continue;
-      void submitGeneration(item.id);
+      void submitGeneration(item);
     }
   }, [queueHydrated, queue, submitGeneration]);
 

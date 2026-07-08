@@ -194,8 +194,10 @@
 
   .page-title {
     @apply mb-6 text-3xl font-bold tracking-tight;
-    line-height: 1.45;
-    padding-block: 0.12em;
+    /* Mali วางสระ/วรรณยุกต์ซ้อนสูง (เช่น ั + ้) — ต้องเผื่อพื้นที่แนวตั้ง
+       ไม่งั้น background-clip: text จะตัดวรรณยุกต์ที่ล้นกล่อง */
+    line-height: 1.7;
+    padding-block: 0.3em;
     background: linear-gradient(
       135deg,
       oklch(0.52 0.16 255) 0%,

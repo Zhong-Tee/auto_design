@@ -1,8 +1,8 @@
 import OpenAI, { toFile } from "openai";
 import type { ShapeQuality } from "@/types/database";
 import { extractTokenUsage } from "@/lib/cost";
+import { DEFAULT_IMAGE_MODEL } from "@/lib/image-models";
 
-const MODEL = "gpt-image-2";
 const TIMEOUT_MS = 300_000;
 
 function toUserFacingOpenAIError(error: unknown): Error {
@@ -64,6 +64,7 @@ export interface GenerateImageParams {
   width: number;
   height: number;
   quality: ShapeQuality;
+  model?: string;
   inputImageBuffer?: Buffer;
   inputImageMimeType?: string;
 }
@@ -71,6 +72,7 @@ export interface GenerateImageParams {
 export async function generateImage(params: GenerateImageParams) {
   const openai = getOpenAIClient();
   const size = `${params.width}x${params.height}` as `${number}x${number}`;
+  const model = params.model || DEFAULT_IMAGE_MODEL;
 
   const result = await withRetry(async () => {
     if (params.inputImageBuffer) {
@@ -81,7 +83,7 @@ export async function generateImage(params: GenerateImageParams) {
       );
 
       return openai.images.edit({
-        model: MODEL,
+        model,
         image: file,
         prompt: params.prompt,
         size,
@@ -90,7 +92,7 @@ export async function generateImage(params: GenerateImageParams) {
     }
 
     return openai.images.generate({
-      model: MODEL,
+      model,
       prompt: params.prompt,
       size,
       quality: params.quality,
@@ -107,6 +109,6 @@ export async function generateImage(params: GenerateImageParams) {
   return {
     imageBuffer: Buffer.from(imageData.b64_json, "base64"),
     usage,
-    model: MODEL,
+    model,
   };
 }

@@ -4,8 +4,9 @@ import { sanitizeOrderNumber } from "@/lib/order-filename";
 export type QueueItemStatus = "processing" | "success" | "failed";
 
 export interface QueuePayload {
-  productId: string;
-  patternId: string;
+  productId?: string;
+  patternId?: string;
+  artStyleId?: string;
   orderNumber: string;
   texts: string[];
   uploadedImageUrl: string | null;
@@ -71,6 +72,7 @@ export interface GenerationStatusResponse {
   costUsd?: number;
   costThb?: number;
   costThbDisplay?: string;
+  processingMs?: number;
   error?: string;
 }
 
@@ -116,6 +118,7 @@ export function applyGenerationStatus(
       costUsd: data.costUsd ?? 0,
       costThb: data.costThb ?? 0,
       costThbDisplay: data.costThbDisplay ?? "0.00",
+      processingMs: data.processingMs,
     },
   };
 }

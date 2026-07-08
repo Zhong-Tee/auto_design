@@ -10,14 +10,20 @@ import {
 } from "@/lib/shapes";
 import { sanitizeOrderNumber } from "@/lib/order-filename";
 import { kickGenerationQueue } from "@/lib/generation-queue";
+import { resolveImageModel } from "@/lib/image-models";
 
-const generateSchema = z.object({
-  productId: z.string().uuid(),
-  patternId: z.string().uuid(),
-  orderNumber: z.string().min(1).max(100),
-  texts: z.array(z.string()),
-  uploadedImageUrl: z.string().url().optional().nullable(),
-});
+const generateSchema = z
+  .object({
+    productId: z.string().uuid().optional().nullable(),
+    patternId: z.string().uuid().optional().nullable(),
+    artStyleId: z.string().uuid().optional().nullable(),
+    orderNumber: z.string().min(1).max(100),
+    texts: z.array(z.string()),
+    uploadedImageUrl: z.string().url().optional().nullable(),
+  })
+  .refine((d) => d.artStyleId || (d.productId && d.patternId), {
+    message: "ต้องเลือกสินค้าและรูปแบบ หรือ Art Style",
+  });
 
 export async function POST(request: Request) {
   try {
@@ -37,8 +43,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "ข้อมูลไม่ถูกต้อง" }, { status: 400 });
     }
 
-    const { productId, patternId, orderNumber, texts, uploadedImageUrl } =
-      parsed.data;
+    const {
+      productId,
+      patternId,
+      artStyleId,
+      orderNumber,
+      texts,
+      uploadedImageUrl,
+    } = parsed.data;
 
     const sanitizedOrder = sanitizeOrderNumber(orderNumber);
     if (!sanitizedOrder) {
@@ -62,25 +74,54 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: pattern } = await supabase
-      .from("patterns")
-      .select("*")
-      .eq("id", patternId)
-      .eq("is_active", true)
-      .single();
+    let promptUsed: string;
 
-    if (!pattern) {
-      return NextResponse.json(
-        { error: "ไม่พบรูปแบบที่เลือก" },
-        { status: 400 }
-      );
-    }
+    if (artStyleId) {
+      const { data: artStyle } = await supabase
+        .from("art_styles")
+        .select("*")
+        .eq("id", artStyleId)
+        .eq("is_active", true)
+        .single();
 
-    if (pattern.requires_image && !uploadedImageUrl) {
-      return NextResponse.json(
-        { error: "รูปแบบนี้ต้องอัปโหลดรูปคน" },
-        { status: 400 }
-      );
+      if (!artStyle) {
+        return NextResponse.json(
+          { error: "ไม่พบ Art Style ที่เลือก" },
+          { status: 400 }
+        );
+      }
+
+      if (!uploadedImageUrl) {
+        return NextResponse.json(
+          { error: "กรุณาอัปโหลดรูปสำหรับ Art Style" },
+          { status: 400 }
+        );
+      }
+
+      promptUsed = artStyle.prompt_template;
+    } else {
+      const { data: pattern } = await supabase
+        .from("patterns")
+        .select("*")
+        .eq("id", patternId!)
+        .eq("is_active", true)
+        .single();
+
+      if (!pattern) {
+        return NextResponse.json(
+          { error: "ไม่พบรูปแบบที่เลือก" },
+          { status: 400 }
+        );
+      }
+
+      if (pattern.requires_image && !uploadedImageUrl) {
+        return NextResponse.json(
+          { error: "รูปแบบนี้ต้องอัปโหลดรูปคน" },
+          { status: 400 }
+        );
+      }
+
+      promptUsed = fillPromptTemplate(pattern.prompt_template, texts);
     }
 
     const shapeSizeErrors = getShapeSizeErrors(
@@ -91,22 +132,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: shapeSizeErrors[0] }, { status: 400 });
     }
 
-    const promptUsed = fillPromptTemplate(pattern.prompt_template, texts);
+    const { data: modelRows } = await supabase
+      .from("app_settings")
+      .select("key, value")
+      .eq("key", "openai_image_model");
+
     const size = `${DEFAULT_GENERATION_WIDTH}x${DEFAULT_GENERATION_HEIGHT}`;
 
     const { data: generation, error: insertError } = await supabase
       .from("generations")
       .insert({
         user_id: user.id,
-        product_id: productId,
-        pattern_id: patternId,
+        product_id: productId ?? null,
+        pattern_id: patternId ?? null,
+        art_style_id: artStyleId ?? null,
         shape_id: null,
         input_text: Object.fromEntries(
           texts.map((t, i) => [`text${i + 1}`, t])
         ),
         uploaded_image_url: uploadedImageUrl ?? null,
         prompt_used: promptUsed,
-        model: "gpt-image-2",
+        model: resolveImageModel(modelRows ?? []),
         quality: DEFAULT_GENERATION_QUALITY,
         size,
         order_number: sanitizedOrder,

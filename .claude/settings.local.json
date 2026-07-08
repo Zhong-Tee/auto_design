@@ -4,7 +4,14 @@
       "Bash(npx next lint:*)",
       "Bash(npm run lint:*)",
       "Bash(npx tsc:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(\"E:/Web_App/TR-Auto_Design/node_modules/.bin/tsc\" --noEmit -p tsconfig.json)",
+      "Bash(npm install *)",
+      "Bash(cp E:/Web_App/TR-Auto_Design/.env.local \"E:/Web_App/TR-Auto_Design/.claude/worktrees/nice-williams-2e02fb/.env.local\")",
+      "Bash(./node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(npm run *)",
+      "Bash(node \"C:/Users/USER/AppData/Local/Temp/claude/E--Web-App-TR-Auto-Design--claude-worktrees-nice-williams-2e02fb/38fe9e1a-71ba-4032-bc31-d27b307975b0/scratchpad/check-queue.mjs\" \".env.local\")",
+      "Bash(node -e ' *)"
     ]
   }
 }

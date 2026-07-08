@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth/session";
 import { buildPricingSettings } from "@/lib/cost";
+import { isOpenAIImageModel, resolveImageModel } from "@/lib/image-models";
 
 async function adminClient() {
   await requireAdmin();
@@ -14,7 +15,10 @@ export async function getSettings() {
   const supabase = await adminClient();
   const { data, error } = await supabase.from("app_settings").select("*");
   if (error) throw new Error(error.message);
-  return buildPricingSettings(data ?? []);
+  return {
+    pricing: buildPricingSettings(data ?? []),
+    imageModel: resolveImageModel(data ?? []),
+  };
 }
 
 export async function saveSettings(formData: FormData) {
@@ -34,6 +38,16 @@ export async function saveSettings(formData: FormData) {
     const { error } = await supabase
       .from("app_settings")
       .upsert({ key, value: String(value), updated_at: new Date().toISOString() });
+    if (error) throw new Error(error.message);
+  }
+
+  const model = formData.get("openai_image_model");
+  if (isOpenAIImageModel(model)) {
+    const { error } = await supabase.from("app_settings").upsert({
+      key: "openai_image_model",
+      value: model,
+      updated_at: new Date().toISOString(),
+    });
     if (error) throw new Error(error.message);
   }
 

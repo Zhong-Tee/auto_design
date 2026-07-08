@@ -42,6 +42,16 @@ export interface Pattern {
   created_at: string;
 }
 
+export interface ArtStyle {
+  id: string;
+  name: string;
+  prompt_template: string;
+  thumbnail_url: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface Shape {
   id: string;
   name: string;
@@ -73,6 +83,7 @@ export interface Generation {
   user_id: string;
   product_id: string | null;
   pattern_id: string | null;
+  art_style_id: string | null;
   shape_id: string | null;
   input_text: Record<string, string>;
   uploaded_image_url: string | null;
@@ -91,6 +102,7 @@ export interface Generation {
   error_message: string | null;
   order_number: string | null;
   processing_started_at: string | null;
+  processing_duration_ms: number | null;
   created_at: string;
 }
 
@@ -118,6 +130,7 @@ export interface GenerationResult {
   costThb: number;
   costThbDisplay: string;
   promptUsed: string;
+  processingMs?: number;
 }
 
 type TableDef<T> = {
@@ -134,6 +147,7 @@ export interface Database {
       products: TableDef<Product>;
       text_box_configs: TableDef<TextBoxConfig>;
       patterns: TableDef<Pattern>;
+      art_styles: TableDef<ArtStyle>;
       shapes: TableDef<Shape>;
       prompts: TableDef<Prompt>;
       app_settings: TableDef<AppSetting>;

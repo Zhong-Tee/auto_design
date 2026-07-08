@@ -78,5 +78,6 @@ export async function GET(
     costUsd: generation.cost_usd,
     costThb: generation.cost_thb,
     costThbDisplay: generation.cost_thb.toFixed(2),
+    processingMs: generation.processing_duration_ms ?? undefined,
   });
 }

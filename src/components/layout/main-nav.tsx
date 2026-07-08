@@ -16,6 +16,7 @@ import type { Profile } from "@/types/database";
 
 const navItems = [
   { href: "/", label: "สร้างรูป" },
+  { href: "/kids", label: "หน้าเด็ก" },
   { href: "/history", label: "ประวัติ" },
 ];
 

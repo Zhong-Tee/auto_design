@@ -9,6 +9,7 @@ const adminNavItems = [
   { href: "/admin/users", label: "ผู้ใช้" },
   { href: "/admin/products", label: "สินค้า" },
   { href: "/admin/patterns", label: "รูปแบบ" },
+  { href: "/admin/art-styles", label: "Art Style" },
   { href: "/admin/prompts", label: "คลัง Prompt" },
   { href: "/admin/settings", label: "ตั้งค่า" },
   { href: "/admin/reports", label: "รายงาน" },

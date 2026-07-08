@@ -105,8 +105,13 @@ export function GenerateQueuePanel({
                       )}
                     </div>
 
-                    <div className="hidden shrink-0 text-sm tabular-nums text-muted-foreground md:block">
-                      {elapsed}
+                    <div className="hidden shrink-0 text-right text-sm tabular-nums text-muted-foreground md:block">
+                      <p>{elapsed}</p>
+                      {item.result?.processingMs != null && (
+                        <p className="text-[11px]">
+                          AI {formatElapsed(item.result.processingMs)}
+                        </p>
+                      )}
                     </div>
 
                     <div className="shrink-0 text-right text-sm tabular-nums">
@@ -127,8 +132,13 @@ export function GenerateQueuePanel({
                       </p>
                     </div>
 
-                    <div className="shrink-0 text-sm tabular-nums text-muted-foreground md:hidden">
-                      {elapsed}
+                    <div className="shrink-0 text-right text-sm tabular-nums text-muted-foreground md:hidden">
+                      <p>{elapsed}</p>
+                      {item.result?.processingMs != null && (
+                        <p className="text-[11px]">
+                          AI {formatElapsed(item.result.processingMs)}
+                        </p>
+                      )}
                     </div>
 
                     <Badge
