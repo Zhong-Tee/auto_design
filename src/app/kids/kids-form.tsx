@@ -38,12 +38,19 @@ export function KidsForm({
   const [step, setStep] = useState(0);
   const [orderNumber, setOrderNumber] = useState("");
   const [artStyleId, setArtStyleId] = useState("");
+  const [variableValues, setVariableValues] = useState<Record<string, string>>(
+    {}
+  );
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
   const artStyles = initialArtStyles;
   const selectedArtStyle = artStyles.find((s) => s.id === artStyleId);
+  const styleVariables = selectedArtStyle?.variables ?? [];
+  const variablesFilled = styleVariables.every((v) =>
+    (variableValues[v.key] ?? "").trim()
+  );
 
   const queueDuplicate = useMemo(
     () =>
@@ -86,9 +93,15 @@ export function KidsForm({
   function resetFormForNewGeneration() {
     setOrderNumber("");
     setArtStyleId("");
+    setVariableValues({});
     setUploadedImageUrl(null);
     setUploadPreview(null);
     setStep(0);
+  }
+
+  function selectArtStyle(id: string) {
+    setArtStyleId(id);
+    setVariableValues({});
   }
 
   async function handleGenerate() {
@@ -105,6 +118,14 @@ export function KidsForm({
 
     if (!uploadedImageUrl) {
       toast.error("กรุณาอัปโหลดรูป");
+      return;
+    }
+
+    const missingVariable = styleVariables.find(
+      (v) => !(variableValues[v.key] ?? "").trim()
+    );
+    if (missingVariable) {
+      toast.error(`กรุณากรอก "${missingVariable.label}"`);
       return;
     }
 
@@ -140,6 +161,10 @@ export function KidsForm({
       artStyleId,
       orderNumber: trimmedOrder,
       texts: [],
+      variables: styleVariables.reduce<Record<string, string>>((acc, v) => {
+        acc[v.key] = (variableValues[v.key] ?? "").trim();
+        return acc;
+      }, {}),
       uploadedImageUrl,
     };
 
@@ -240,7 +265,7 @@ export function KidsForm({
                     <button
                       key={style.id}
                       type="button"
-                      onClick={() => setArtStyleId(style.id)}
+                      onClick={() => selectArtStyle(style.id)}
                       className={`rounded-xl border p-3 text-left transition-all ${
                         artStyleId === style.id
                           ? "border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20"
@@ -266,11 +291,37 @@ export function KidsForm({
                   ))}
                 </div>
               )}
+              {styleVariables.length > 0 && (
+                <div className="mx-auto w-full max-w-md space-y-4 rounded-xl border bg-secondary/30 p-4">
+                  <p className="text-sm font-medium">กรอกข้อมูลเพิ่มเติม</p>
+                  {styleVariables.map((v) => (
+                    <div key={v.key} className="space-y-2 text-left">
+                      <Label htmlFor={`kids-var-${v.key}`}>{v.label}</Label>
+                      <Input
+                        id={`kids-var-${v.key}`}
+                        className="h-11"
+                        value={variableValues[v.key] ?? ""}
+                        onChange={(e) =>
+                          setVariableValues((prev) => ({
+                            ...prev,
+                            [v.key]: e.target.value,
+                          }))
+                        }
+                        maxLength={200}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="generate-actions">
                 <Button variant="outline" onClick={() => setStep(0)}>
                   ย้อนกลับ
                 </Button>
-                <Button onClick={() => setStep(2)} disabled={!artStyleId} className="min-w-32">
+                <Button
+                  onClick={() => setStep(2)}
+                  disabled={!artStyleId || !variablesFilled}
+                  className="min-w-32"
+                >
                   ถัดไป
                 </Button>
               </div>
@@ -329,6 +380,11 @@ export function KidsForm({
                   <p>
                     <strong>Art Style:</strong> {selectedArtStyle?.name}
                   </p>
+                  {styleVariables.map((v) => (
+                    <p key={v.key}>
+                      <strong>{v.label}:</strong> {variableValues[v.key]?.trim()}
+                    </p>
+                  ))}
                 </div>
                 {queueDuplicate && (
                   <Alert variant="destructive">

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, PlusIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,8 +22,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { sanitizeVariableKey } from "@/lib/prompt";
 import { saveArtStyle, deleteArtStyle, reorderArtStyle } from "./actions";
-import type { ArtStyle, Prompt } from "@/types/database";
+import type { ArtStyle, ArtStyleVariable, Prompt } from "@/types/database";
 
 interface ArtStylesPanelProps {
   initialArtStyles: ArtStyle[];
@@ -39,6 +40,7 @@ export function ArtStylesPanel({
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ArtStyle | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [variables, setVariables] = useState<ArtStyleVariable[]>([]);
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -78,12 +80,39 @@ export function ArtStylesPanel({
 
   function openCreate() {
     setEditing(null);
+    setVariables([]);
     setOpen(true);
   }
 
   function openEdit(style: ArtStyle) {
     setEditing(style);
+    setVariables(style.variables ?? []);
     setOpen(true);
+  }
+
+  function addVariable() {
+    setVariables((prev) => [...prev, { key: "", label: "" }]);
+  }
+
+  function updateVariable(
+    index: number,
+    field: keyof ArtStyleVariable,
+    value: string
+  ) {
+    setVariables((prev) =>
+      prev.map((v, i) =>
+        i === index
+          ? {
+              ...v,
+              [field]: field === "key" ? sanitizeVariableKey(value) : value,
+            }
+          : v
+      )
+    );
+  }
+
+  function removeVariable(index: number) {
+    setVariables((prev) => prev.filter((_, i) => i !== index));
   }
 
   function handleSave(formData: FormData) {
@@ -228,6 +257,74 @@ export function ArtStylesPanel({
                 ใช้กับรูปที่ผู้ใช้อัปโหลด — อธิบายสไตล์ที่ต้องการแปลงรูป
               </p>
             </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>กล่องตัวแปร</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addVariable}
+                >
+                  <PlusIcon className="size-4" />
+                  เพิ่มตัวแปร
+                </Button>
+              </div>
+              {variables.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  ยังไม่มีตัวแปร — เพิ่มเพื่อให้หน้าสร้างรูปมีกล่องกรอก
+                  แล้วใช้ {"{{ชื่อตัวแปร}}"} ใน Prompt
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {variables.map((v, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        value={v.key}
+                        onChange={(e) => updateVariable(i, "key", e.target.value)}
+                        placeholder="ชื่อตัวแปร เช่น suite"
+                        className="w-2/5"
+                        aria-label="ชื่อตัวแปร"
+                      />
+                      <Input
+                        value={v.label}
+                        onChange={(e) =>
+                          updateVariable(i, "label", e.target.value)
+                        }
+                        placeholder="หัวข้อ เช่น ชุดที่ต้องการ"
+                        className="flex-1"
+                        aria-label="หัวข้อกล่องกรอก"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 shrink-0"
+                        onClick={() => removeVariable(i)}
+                        aria-label="ลบตัวแปร"
+                      >
+                        <XIcon className="size-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground">
+                    ใส่ในเทมเพลต:{" "}
+                    {variables
+                      .filter((v) => v.key)
+                      .map((v) => `{{${v.key}}}`)
+                      .join(", ") || "—"}
+                  </p>
+                </div>
+              )}
+              <input
+                type="hidden"
+                name="variables"
+                value={JSON.stringify(variables)}
+                readOnly
+              />
+            </div>
+
             <Button type="submit" disabled={pending}>
               บันทึก
             </Button>

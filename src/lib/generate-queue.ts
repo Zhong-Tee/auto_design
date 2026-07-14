@@ -9,6 +9,8 @@ export interface QueuePayload {
   artStyleId?: string;
   orderNumber: string;
   texts: string[];
+  /** ค่าตัวแปรกำหนดเองของ Art Style เช่น { suite: "ชุดนักบิน" } */
+  variables?: Record<string, string>;
   uploadedImageUrl: string | null;
 }
 

@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { fillPromptTemplate } from "@/lib/prompt";
+import { fillPromptTemplate, fillNamedPlaceholders } from "@/lib/prompt";
 import { getShapeSizeErrors } from "@/lib/shapes";
 import {
   DEFAULT_GENERATION_HEIGHT,
@@ -19,6 +19,7 @@ const generateSchema = z
     artStyleId: z.string().uuid().optional().nullable(),
     orderNumber: z.string().min(1).max(100),
     texts: z.array(z.string()),
+    variables: z.record(z.string(), z.string()).optional().nullable(),
     uploadedImageUrl: z.string().url().optional().nullable(),
   })
   .refine((d) => d.artStyleId || (d.productId && d.patternId), {
@@ -49,6 +50,7 @@ export async function POST(request: Request) {
       artStyleId,
       orderNumber,
       texts,
+      variables,
       uploadedImageUrl,
     } = parsed.data;
 
@@ -98,7 +100,10 @@ export async function POST(request: Request) {
         );
       }
 
-      promptUsed = artStyle.prompt_template;
+      promptUsed = fillNamedPlaceholders(
+        artStyle.prompt_template,
+        variables ?? {}
+      );
     } else {
       const { data: pattern } = await supabase
         .from("patterns")
@@ -147,9 +152,9 @@ export async function POST(request: Request) {
         pattern_id: patternId ?? null,
         art_style_id: artStyleId ?? null,
         shape_id: null,
-        input_text: Object.fromEntries(
-          texts.map((t, i) => [`text${i + 1}`, t])
-        ),
+        input_text: artStyleId
+          ? (variables ?? {})
+          : Object.fromEntries(texts.map((t, i) => [`text${i + 1}`, t])),
         uploaded_image_url: uploadedImageUrl ?? null,
         prompt_used: promptUsed,
         model: resolveImageModel(modelRows ?? []),

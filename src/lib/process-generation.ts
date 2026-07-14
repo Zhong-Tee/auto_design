@@ -118,37 +118,42 @@ export async function processGenerationJob(generationId: string): Promise<void> 
     const pricing = buildPricingSettings(settingsRows ?? []);
     const { costUsd, costThb } = calculateCost(usage, pricing);
 
-    const { error: updateError } = await supabase
+    // ต้องเขียน processing_duration_ms พร้อมกับ flip status เป็น success ในคำสั่งเดียว
+    // ไม่งั้น client ที่ poll มาระหว่างสอง update จะเจอ success แต่เวลา AI ยัง null
+    // แล้วหยุด poll → เวลา AI ไม่แสดงถาวร
+    const successPayload = {
+      output_image_url: outputImageUrl,
+      prompt_used: promptUsed,
+      model,
+      input_text_tokens: usage.input_text_tokens,
+      input_image_tokens: usage.input_image_tokens,
+      output_image_tokens: usage.output_image_tokens,
+      total_tokens: usage.total_tokens,
+      cost_usd: costUsd,
+      cost_thb: costThb,
+      status: "success" as const,
+      processing_started_at: null,
+    };
+
+    let { error: updateError } = await supabase
       .from("generations")
-      .update({
-        output_image_url: outputImageUrl,
-        prompt_used: promptUsed,
-        model,
-        input_text_tokens: usage.input_text_tokens,
-        input_image_tokens: usage.input_image_tokens,
-        output_image_tokens: usage.output_image_tokens,
-        total_tokens: usage.total_tokens,
-        cost_usd: costUsd,
-        cost_thb: costThb,
-        status: "success",
-        processing_started_at: null,
-      })
+      .update({ ...successPayload, processing_duration_ms: processingDurationMs })
       .eq("id", generationId);
 
     if (updateError) {
-      throw new Error("สร้างรูปสำเร็จแต่บันทึกไม่ครบ");
+      // เผื่อฐานข้อมูลยังไม่ได้รัน migration 010 (ไม่มีคอลัมน์ processing_duration_ms)
+      // ลองใหม่โดยไม่รวมคอลัมน์นั้น เพื่อไม่ให้งานที่สำเร็จแล้วถูกมาร์คว่าล้มเหลว
+      console.warn(
+        `[generate] retry without duration (${updateError.message}) — รัน migration 010 เพื่อเก็บเวลา API`
+      );
+      ({ error: updateError } = await supabase
+        .from("generations")
+        .update(successPayload)
+        .eq("id", generationId));
     }
 
-    // แยกจาก update หลัก — คอลัมน์นี้มาจาก migration 010
-    // ถ้าฐานข้อมูลยังไม่ได้รัน migration งานต้องไม่ล้ม
-    const { error: durationError } = await supabase
-      .from("generations")
-      .update({ processing_duration_ms: processingDurationMs })
-      .eq("id", generationId);
-    if (durationError) {
-      console.warn(
-        `[generate] duration not saved (${durationError.message}) — รัน migration 010 เพื่อเก็บเวลา API`
-      );
+    if (updateError) {
+      throw new Error("สร้างรูปสำเร็จแต่บันทึกไม่ครบ");
     }
 
     console.info(

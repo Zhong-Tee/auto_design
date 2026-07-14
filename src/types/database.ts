@@ -42,12 +42,18 @@ export interface Pattern {
   created_at: string;
 }
 
+export interface ArtStyleVariable {
+  key: string;
+  label: string;
+}
+
 export interface ArtStyle {
   id: string;
   name: string;
   prompt_template: string;
   thumbnail_url: string | null;
   is_active: boolean;
+  variables: ArtStyleVariable[];
   sort_order: number;
   created_at: string;
 }

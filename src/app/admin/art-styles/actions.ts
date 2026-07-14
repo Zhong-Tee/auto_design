@@ -3,6 +3,28 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth/session";
+import { sanitizeVariableKey } from "@/lib/prompt";
+import type { ArtStyleVariable } from "@/types/database";
+
+function parseVariables(raw: string | null): ArtStyleVariable[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    const result: ArtStyleVariable[] = [];
+    for (const item of parsed) {
+      const key = sanitizeVariableKey(String(item?.key ?? ""));
+      const label = String(item?.label ?? "").trim();
+      if (!key || !label || seen.has(key)) continue;
+      seen.add(key);
+      result.push({ key, label });
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
 
 async function adminClient() {
   await requireAdmin();
@@ -34,8 +56,9 @@ export async function saveArtStyle(formData: FormData) {
   const name = formData.get("name") as string;
   const prompt_template = formData.get("prompt_template") as string;
   const thumbnail_url = (formData.get("thumbnail_url") as string) || null;
+  const variables = parseVariables(formData.get("variables") as string | null);
 
-  const payload = { name, prompt_template, thumbnail_url };
+  const payload = { name, prompt_template, thumbnail_url, variables };
 
   if (id) {
     const { error } = await supabase
