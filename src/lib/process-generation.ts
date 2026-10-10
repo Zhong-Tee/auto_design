@@ -1,183 +1,99 @@
-import { fillPromptTemplate } from "@/lib/prompt";
 import { generateImage } from "@/lib/openai";
-import {
-  buildOutputKey,
-  fetchImageFromUrl,
-  uploadImage,
-} from "@/lib/storage";
+import { fetchImageFromUrl, uploadImage } from "@/lib/storage";
 import { buildPricingSettings, calculateCost } from "@/lib/cost";
-import { resolveImageModel } from "@/lib/image-models";
-import {
-  DEFAULT_GENERATION_HEIGHT,
-  DEFAULT_GENERATION_QUALITY,
-  DEFAULT_GENERATION_WIDTH,
-} from "@/lib/shapes";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { kickGenerationQueue } from "@/lib/generation-queue";
+import type { Generation, ShapeQuality } from "@/types/database";
 
-export async function processGenerationJob(generationId: string): Promise<void> {
+const JOB_DEADLINE_MS = 25 * 60 * 1000;
+
+/** A claimed job carries an immutable lease token. All writes are fenced by it. */
+export async function processGenerationJob(generation: Generation): Promise<void> {
   const supabase = createAdminClient();
+  const id = generation.id;
+  const token = generation.worker_token;
+  if (!token) throw new Error("งานไม่มี worker token กรุณารัน migration 012");
+  const controller = new AbortController();
+  const { signal } = controller;
   const startedAt = Date.now();
+  let heartbeatBusy = false;
 
-  const { data: generation, error: claimError } = await supabase
-    .from("generations")
-    .update({
-      status: "processing",
-      processing_started_at: new Date().toISOString(),
-    })
-    .eq("id", generationId)
-    .eq("status", "pending")
-    .select("*")
-    .single();
-
-  if (claimError || !generation) {
-    return;
+  async function updateOwned(payload: Record<string, unknown>) {
+    const { data, error } = await supabase.from("generations").update(payload)
+      .eq("id", id).eq("worker_token", token).eq("status", "processing")
+      .select("id").maybeSingle();
+    if (error) throw new Error(`บันทึกสถานะงานไม่สำเร็จ: ${error.message}`);
+    if (!data) {
+      controller.abort(new Error("งานถูกยกเลิกหรือสิทธิ์ประมวลผลสิ้นสุดแล้ว"));
+      signal.throwIfAborted();
+    }
   }
 
-  console.info(`[generate] start ${generationId} order=${generation.order_number}`);
+  async function progress(step: string, extra: Record<string, unknown> = {}) {
+    signal.throwIfAborted();
+    await updateOwned({ processing_step: step, heartbeat_at: new Date().toISOString(), ...extra });
+    console.info(`[generate] ${id} order=${generation.order_number} step=${step}`);
+  }
 
+  const heartbeat = setInterval(async () => {
+    if (heartbeatBusy || signal.aborted) return;
+    heartbeatBusy = true;
+    try {
+      await updateOwned({ heartbeat_at: new Date().toISOString() });
+    } catch (error) {
+      // Fail closed: never continue a paid request while ownership is uncertain.
+      controller.abort(error);
+      console.error(`[generate] ${id} heartbeat failed`, error);
+    } finally { heartbeatBusy = false; }
+  }, 15_000);
+  const deadline = setTimeout(() => controller.abort(new Error(
+    "งานเกินเวลาสูงสุด 25 นาที ผลจาก AI อาจยังไม่แน่นอน กรุณาตรวจสอบก่อนสร้างใหม่"
+  )), JOB_DEADLINE_MS);
+
+  console.info(`[generate] start ${id} order=${generation.order_number} token=${token}`);
   try {
-    const { data: settingsRows } = await supabase
-      .from("app_settings")
-      .select("key, value");
+    const { data: settingsRows, error: settingsError } = await supabase.from("app_settings").select("key, value");
+    if (settingsError) throw settingsError;
+    if (!generation.prompt_used) throw new Error("ไม่พบคำสั่งที่บันทึกไว้สำหรับงานนี้");
 
-    let promptTemplate: string;
-    let requiresImage: boolean;
-
-    if (generation.art_style_id) {
-      const { data: artStyle } = await supabase
-        .from("art_styles")
-        .select("*")
-        .eq("id", generation.art_style_id)
-        .single();
-
-      if (!artStyle) {
-        throw new Error("ไม่พบ Art Style ที่เลือก");
-      }
-
-      promptTemplate = artStyle.prompt_template;
-      requiresImage = true;
-    } else {
-      const { data: pattern } = await supabase
-        .from("patterns")
-        .select("*")
-        .eq("id", generation.pattern_id!)
-        .single();
-
-      if (!pattern) {
-        throw new Error("ไม่พบรูปแบบที่เลือก");
-      }
-
-      promptTemplate = pattern.prompt_template;
-      requiresImage = pattern.requires_image;
-    }
-
-    if (requiresImage && !generation.uploaded_image_url) {
-      throw new Error(
-        generation.art_style_id
-          ? "กรุณาอัปโหลดรูปสำหรับ Art Style"
-          : "รูปแบบนี้ต้องอัปโหลดรูปคน"
-      );
-    }
-
-    const promptUsed =
-      generation.prompt_used ||
-      fillPromptTemplate(
-        promptTemplate,
-        Object.values(generation.input_text ?? {})
-      );
-
-    let inputImageBuffer: Buffer | undefined;
-    if (requiresImage && generation.uploaded_image_url) {
-      inputImageBuffer = await fetchImageFromUrl(generation.uploaded_image_url);
-    }
-
+    await progress("loading");
+    const inputImageBuffer = generation.uploaded_image_url
+      ? await fetchImageFromUrl(generation.uploaded_image_url, signal) : undefined;
+    const [width, height] = (generation.size ?? "1024x1024").split("x").map(Number);
     const apiStartedAt = Date.now();
     const { imageBuffer, usage, model } = await generateImage({
-      prompt: promptUsed,
-      width: DEFAULT_GENERATION_WIDTH,
-      height: DEFAULT_GENERATION_HEIGHT,
-      quality: DEFAULT_GENERATION_QUALITY,
-      model: resolveImageModel(settingsRows ?? []),
-      inputImageBuffer,
-      inputImageMimeType: "image/png",
+      prompt: generation.prompt_used, width, height,
+      quality: (generation.quality ?? "medium") as ShapeQuality,
+      model: generation.model, inputImageBuffer, inputImageMimeType: "image/png", signal,
+      onAttempt: (attempt) => progress("generating", { attempt_count: attempt }),
+      onRetry: () => progress("retrying"),
     });
     const processingDurationMs = Date.now() - apiStartedAt;
-
-    const outputKey = buildOutputKey(
-      generation.user_id,
-      generation.order_number ?? "output"
-    );
-    const outputImageUrl = await uploadImage(
-      outputKey,
-      imageBuffer,
-      "image/png",
-      { upsert: true }
-    );
-
-    const pricing = buildPricingSettings(settingsRows ?? []);
-    const { costUsd, costThb } = calculateCost(usage, pricing);
-
-    // ต้องเขียน processing_duration_ms พร้อมกับ flip status เป็น success ในคำสั่งเดียว
-    // ไม่งั้น client ที่ poll มาระหว่างสอง update จะเจอ success แต่เวลา AI ยัง null
-    // แล้วหยุด poll → เวลา AI ไม่แสดงถาวร
-    const successPayload = {
-      output_image_url: outputImageUrl,
-      prompt_used: promptUsed,
-      model,
-      input_text_tokens: usage.input_text_tokens,
-      input_image_tokens: usage.input_image_tokens,
-      output_image_tokens: usage.output_image_tokens,
-      total_tokens: usage.total_tokens,
-      cost_usd: costUsd,
-      cost_thb: costThb,
-      status: "success" as const,
-      processing_started_at: null,
-    };
-
-    let { error: updateError } = await supabase
-      .from("generations")
-      .update({ ...successPayload, processing_duration_ms: processingDurationMs })
-      .eq("id", generationId);
-
-    if (updateError) {
-      // เผื่อฐานข้อมูลยังไม่ได้รัน migration 010 (ไม่มีคอลัมน์ processing_duration_ms)
-      // ลองใหม่โดยไม่รวมคอลัมน์นั้น เพื่อไม่ให้งานที่สำเร็จแล้วถูกมาร์คว่าล้มเหลว
-      console.warn(
-        `[generate] retry without duration (${updateError.message}) — รัน migration 010 เพื่อเก็บเวลา API`
-      );
-      ({ error: updateError } = await supabase
-        .from("generations")
-        .update(successPayload)
-        .eq("id", generationId));
-    }
-
-    if (updateError) {
-      throw new Error("สร้างรูปสำเร็จแต่บันทึกไม่ครบ");
-    }
-
-    console.info(
-      `[generate] success ${generationId} ${Math.round((Date.now() - startedAt) / 1000)}s`
-    );
+    await progress("saving");
+    // Each lease writes a different object. An abandoned worker cannot overwrite a new image.
+    const key = `outputs/${generation.user_id}/${id}/${token}.png`;
+    const outputImageUrl = await uploadImage(key, imageBuffer, "image/png", { signal });
+    signal.throwIfAborted();
+    const { costUsd, costThb } = calculateCost(usage, buildPricingSettings(settingsRows ?? []));
+    await updateOwned({
+      output_image_url: outputImageUrl, model,
+      input_text_tokens: usage.input_text_tokens, input_image_tokens: usage.input_image_tokens,
+      output_image_tokens: usage.output_image_tokens, total_tokens: usage.total_tokens,
+      cost_usd: costUsd, cost_thb: costThb, processing_duration_ms: processingDurationMs,
+      status: "success", processing_step: "completed", completed_at: new Date().toISOString(),
+      worker_token: null, error_message: null,
+    });
+    console.info(`[generate] success ${id} total_ms=${Date.now() - startedAt} api_ms=${processingDurationMs}`);
   } catch (error) {
-    console.error(
-      `[generate] failed ${generationId} ${Math.round((Date.now() - startedAt) / 1000)}s`,
-      error
-    );
-    const message =
-      error instanceof Error
-        ? error.message
-        : "สร้างรูปไม่สำเร็จ กรุณาลองใหม่";
-
-    await supabase
-      .from("generations")
-      .update({
-        status: "failed",
-        error_message: message,
-        processing_started_at: null,
-      })
-      .eq("id", generationId);
+    const reason = signal.aborted ? signal.reason : error;
+    const message = reason instanceof Error ? reason.message : "สร้างรูปไม่สำเร็จ";
+    console.error(`[generate] failed ${id} total_ms=${Date.now() - startedAt}`, reason);
+    const { error: persistError } = await supabase.from("generations").update({
+      status: "failed", error_message: message, processing_step: "failed",
+      completed_at: new Date().toISOString(), worker_token: null,
+    }).eq("id", id).eq("worker_token", token).eq("status", "processing");
+    if (persistError) console.error(`[generate] ${id} could not persist failure`, persistError);
   } finally {
-    void kickGenerationQueue();
+    clearInterval(heartbeat);
+    clearTimeout(deadline);
   }
 }

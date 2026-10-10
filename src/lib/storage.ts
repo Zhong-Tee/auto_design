@@ -31,11 +31,13 @@ async function uploadToSupabaseStorage(
   key: string,
   body: Buffer,
   contentType: string,
-  upsert = false
+  upsert = false,
+  signal?: AbortSignal
 ): Promise<string> {
   await ensureImagesBucket();
 
-  const admin = createAdminClient();
+  signal?.throwIfAborted();
+  const admin = createAdminClient(signal);
   const { error } = await admin.storage.from(STORAGE_BUCKET).upload(key, body, {
     contentType,
     upsert,
@@ -51,14 +53,15 @@ export async function uploadImage(
   key: string,
   body: Buffer,
   contentType: string,
-  options?: { upsert?: boolean }
+  options?: { upsert?: boolean; signal?: AbortSignal }
 ): Promise<string> {
   const upsert = options?.upsert ?? false;
   try {
-    return await uploadToR2(key, body, contentType);
+    return await uploadToR2(key, body, contentType, options?.signal);
   } catch (r2Error) {
+    options?.signal?.throwIfAborted();
     console.warn("R2 upload failed, using Supabase Storage:", r2Error);
-    return uploadToSupabaseStorage(key, body, contentType, upsert);
+    return uploadToSupabaseStorage(key, body, contentType, upsert, options?.signal);
   }
 }
 

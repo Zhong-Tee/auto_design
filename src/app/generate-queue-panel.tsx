@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { useGenerateQueue } from "@/components/generate-queue-provider";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +14,8 @@ import {
 import {
   formatElapsed,
   getQueueElapsedMs,
-  getQueueStatusLabel,
+  getQueueStepLabel,
+  isQueueActive,
   getQueueStatusVariant,
   groupQueueByDay,
   type QueueItem,
@@ -31,6 +33,7 @@ export function GenerateQueuePanel({
   onRetry,
 }: GenerateQueuePanelProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const { cancelGeneration, reconnectGeneration } = useGenerateQueue();
   const groupedQueue = groupQueueByDay(queue);
 
   if (queue.length === 0) {
@@ -82,7 +85,7 @@ export function GenerateQueuePanel({
                         </button>
                       ) : (
                         <div className="flex size-14 items-center justify-center rounded-md border bg-muted/40">
-                          {item.status === "processing" ? (
+                          {isQueueActive(item) ? (
                             <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
                           ) : (
                             <span className="text-xs text-muted-foreground">
@@ -99,14 +102,22 @@ export function GenerateQueuePanel({
                         {item.productName} · {item.patternName}
                       </p>
                       {item.status === "failed" && item.error && (
-                        <p className="mt-0.5 truncate text-xs text-destructive">
+                        <p className="mt-0.5 text-xs text-destructive">
                           {item.error}
                         </p>
+                      )}
+                      {isQueueActive(item) && (item.connectionError || item.warning) && (
+                        <p role="status" className="mt-1 text-xs text-amber-700">
+                          {item.connectionError || item.warning}
+                        </p>
+                      )}
+                      {isQueueActive(item) && (item.attemptCount ?? 0) > 1 && (
+                        <p className="mt-1 text-xs text-muted-foreground">กำลังลองครั้งที่ {item.attemptCount} / 2</p>
                       )}
                     </div>
 
                     <div className="hidden shrink-0 text-right text-sm tabular-nums text-muted-foreground md:block">
-                      <p>{elapsed}</p>
+                      <p title="เวลารวมตั้งแต่เข้าคิวจนเสร็จ">{elapsed}</p>
                       {item.result?.processingMs != null && (
                         <p className="text-[11px]">
                           AI {formatElapsed(item.result.processingMs)}
@@ -133,7 +144,7 @@ export function GenerateQueuePanel({
                     </div>
 
                     <div className="shrink-0 text-right text-sm tabular-nums text-muted-foreground md:hidden">
-                      <p>{elapsed}</p>
+                      <p title="เวลารวมตั้งแต่เข้าคิวจนเสร็จ">{elapsed}</p>
                       {item.result?.processingMs != null && (
                         <p className="text-[11px]">
                           AI {formatElapsed(item.result.processingMs)}
@@ -145,10 +156,22 @@ export function GenerateQueuePanel({
                       variant={getQueueStatusVariant(item.status)}
                       className="shrink-0"
                     >
-                      {getQueueStatusLabel(item.status)}
+                      {getQueueStepLabel(item)}
                     </Badge>
 
                     <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
+                      {isQueueActive(item) ? (
+                        item.generationId ? (
+                          <Button type="button" variant="outline" size="sm" disabled={item.cancelling}
+                            onClick={() => void cancelGeneration(item)}>
+                            {item.cancelling ? "กำลังยกเลิก" : "ยกเลิกงาน"}
+                          </Button>
+                        ) : item.connectionError ? (
+                          <Button type="button" variant="outline" size="sm" onClick={() => reconnectGeneration(item)}>
+                            ตรวจสอบคำขอเดิม
+                          </Button>
+                        ) : null
+                      ) : (
                       <Button
                         type="button"
                         variant="outline"
@@ -157,6 +180,7 @@ export function GenerateQueuePanel({
                       >
                         สร้างซ้ำ
                       </Button>
+                      )}
                       {item.status === "success" && item.result && (
                         <a
                           href={`/api/generate/${encodeURIComponent(item.result.generationId)}/download`}

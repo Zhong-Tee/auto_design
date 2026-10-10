@@ -38,7 +38,8 @@ function getPublicUrl(key: string): string {
 export async function uploadToR2(
   key: string,
   body: Buffer,
-  contentType: string
+  contentType: string,
+  signal?: AbortSignal
 ): Promise<string> {
   const bucket = process.env.R2_BUCKET_NAME;
   if (!bucket) throw new Error("R2_BUCKET_NAME is not configured");
@@ -49,7 +50,8 @@ export async function uploadToR2(
       Key: key,
       Body: body,
       ContentType: contentType,
-    })
+    }),
+    { abortSignal: signal }
   );
 
   return getPublicUrl(key);
@@ -75,8 +77,8 @@ export function buildOutputKey(userId: string): string {
   return `outputs/${userId}/${uuidv4()}.png`;
 }
 
-export async function fetchImageFromUrl(url: string): Promise<Buffer> {
-  const response = await fetch(url);
+export async function fetchImageFromUrl(url: string, signal?: AbortSignal): Promise<Buffer> {
+  const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000) });
   if (!response.ok) {
     throw new Error("ไม่สามารถดาวน์โหลดรูป input ได้");
   }

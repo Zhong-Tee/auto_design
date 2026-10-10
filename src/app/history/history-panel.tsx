@@ -218,6 +218,10 @@ export function HistoryPanel({ items, profileLabels }: HistoryPanelProps) {
                         ? "สำเร็จ"
                         : gen.status === "failed"
                           ? "ล้มเหลว"
+                          : gen.status === "cancelled"
+                            ? "ยกเลิกแล้ว"
+                          : gen.status === "processing"
+                            ? "กำลังประมวลผล"
                           : "รอดำเนินการ"}
                     </Badge>
                   </div>

@@ -12,7 +12,7 @@ import { resolveImageContentType } from "@/lib/image-content-type";
 import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase/client";
 import type { QueuePayload } from "@/lib/generate-queue";
-import { findActiveQueueDuplicate, normalizeOrderNumber } from "@/lib/generate-queue";
+import { findActiveQueueDuplicate, normalizeOrderNumber, isQueueActive } from "@/lib/generate-queue";
 import { GenerateQueuePanel } from "@/app/generate-queue-panel";
 import { useGenerateQueue } from "@/components/generate-queue-provider";
 import type {
@@ -314,7 +314,7 @@ export function GenerateForm({
             {i + 1}. {label}
             {i === 6 && queue.length > 0 && (
               <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-xs font-semibold text-accent-foreground">
-                {queue.filter((q) => q.status === "processing").length || queue.length}
+                {queue.filter(isQueueActive).length || queue.length}
               </span>
             )}
           </button>
@@ -346,7 +346,7 @@ export function GenerateForm({
                 <Alert variant="destructive" className="mx-auto max-w-md">
                   <AlertDescription>
                     เลขออเดอร์ &quot;{orderNumber.trim()}&quot; มีในคิวแล้ว
-                    {queueDuplicate.status === "processing"
+                    {isQueueActive(queueDuplicate)
                       ? " (กำลังสร้าง)"
                       : " (สร้างเสร็จแล้ว)"}{" "}
                     — ใช้เลขอื่นหรือกด &quot;สร้างซ้ำ&quot; จากรายการเดิม
@@ -565,7 +565,7 @@ export function GenerateForm({
                 <Alert variant="destructive">
                   <AlertDescription>
                     เลขออเดอร์ &quot;{orderNumber.trim()}&quot; มีในคิวแล้ว
-                    {queueDuplicate.status === "processing"
+                    {isQueueActive(queueDuplicate)
                       ? " (กำลังสร้าง)"
                       : " (สร้างเสร็จแล้ว)"}{" "}
                     — ใช้เลขอื่นหรือกด &quot;สร้างซ้ำ&quot; จากรายการเดิม

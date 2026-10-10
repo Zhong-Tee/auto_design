@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import {
   applyGenerationStatus,
+  isQueueActive,
   loadQueueFromStorage,
   saveQueueToStorage,
   type GenerationStatusResponse,
@@ -32,6 +33,8 @@ interface GenerateQueueContextValue {
   now: number;
   enqueueGeneration: (input: QueueItemInput) => string;
   retryGeneration: (source: QueueItem) => string;
+  cancelGeneration: (source: QueueItem) => Promise<void>;
+  reconnectGeneration: (source: QueueItem) => void;
 }
 
 const GenerateQueueContext = createContext<GenerateQueueContextValue | null>(
@@ -67,7 +70,7 @@ export function GenerateQueueProvider({
   }, [queue, queueHydrated]);
 
   useEffect(() => {
-    if (!queue.some((item) => item.status === "processing")) return;
+    if (!queue.some(isQueueActive)) return;
 
     const timerId = window.setInterval(() => {
       setNow(Date.now());
@@ -79,7 +82,7 @@ export function GenerateQueueProvider({
   const processingGenerationIds = useMemo(
     () =>
       queue
-        .filter((item) => item.status === "processing" && item.generationId)
+        .filter((item) => isQueueActive(item) && item.generationId)
         .map((item) => item.generationId as string)
         .sort()
         .join(","),
@@ -88,6 +91,8 @@ export function GenerateQueueProvider({
 
   useEffect(() => {
     if (!processingGenerationIds) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
 
     async function pollGeneration(generationId: string) {
       let res: Response;
@@ -97,17 +102,18 @@ export function GenerateQueueProvider({
           signal: AbortSignal.timeout(10_000),
         });
         data = await res.json();
-      } catch {
+        if (!res.ok) throw new Error(res.status === 401 ? "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่เพื่อตรวจสอบงาน" : "ตรวจสอบสถานะงานไม่สำเร็จ ระบบจะลองตรวจสอบอีกครั้ง");
+      } catch (error) {
+        if (!stopped) setQueue((prev) => prev.map((item) => item.generationId === generationId && isQueueActive(item)
+          ? { ...item, connectionError: error instanceof Error ? error.message : "ขาดการเชื่อมต่อขณะตรวจสอบสถานะ ระบบจะลองตรวจสอบอีกครั้ง" } : item));
         return;
       }
 
-      if (!res.ok) return;
+      if (stopped) return;
 
       setQueue((prev) => {
         const target = prev.find((item) => item.generationId === generationId);
-        if (!target || target.status !== "processing") return prev;
-
-        if (data.status === "pending") return prev;
+        if (!target || !isQueueActive(target)) return prev;
 
         const nextItem = applyGenerationStatus(target, data);
         if (data.status === "success") {
@@ -125,14 +131,11 @@ export function GenerateQueueProvider({
     async function pollAll() {
       const ids = processingGenerationIds.split(",").filter(Boolean);
       await Promise.all(ids.map((id) => pollGeneration(id)));
+      if (!stopped) timer = setTimeout(() => { void pollAll(); }, 2500);
     }
 
     void pollAll();
-    const intervalId = window.setInterval(() => {
-      void pollAll();
-    }, 2500);
-
-    return () => window.clearInterval(intervalId);
+    return () => { stopped = true; clearTimeout(timer); };
   }, [processingGenerationIds]);
 
   const submitGeneration = useCallback(async (item: QueueItem) => {
@@ -143,7 +146,7 @@ export function GenerateQueueProvider({
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(item.payload),
+        body: JSON.stringify({ ...item.payload, requestId: item.id }),
         signal: AbortSignal.timeout(60_000),
       });
       const data = await res.json();
@@ -172,7 +175,8 @@ export function GenerateQueueProvider({
             ? {
                 ...entry,
                 generationId: data.generationId as string,
-                status: "processing",
+                status: "pending",
+                connectionError: undefined,
               }
             : entry
         )
@@ -182,22 +186,21 @@ export function GenerateQueueProvider({
         err instanceof DOMException &&
         (err.name === "TimeoutError" || err.name === "AbortError");
       const message = timedOut
-        ? "ส่งคำขอนานเกินไป (เซิร์ฟเวอร์ไม่ตอบสนอง) — กด \"สร้างซ้ำ\" เพื่อลองใหม่"
+        ? "ส่งคำขอนานเกินไป (เซิร์ฟเวอร์ไม่ตอบสนอง)"
         : "ส่งคำขอสร้างรูปไม่สำเร็จ กรุณาลองใหม่";
-      const completedAt = new Date().toISOString();
       setQueue((prev) =>
         prev.map((entry) =>
           entry.id === queueId
             ? {
                 ...entry,
-                status: "failed",
-                completedAt,
-                error: message,
+                connectionError: `${message} ระบบอาจรับงานแล้ว กดตรวจสอบคำขอเดิมเพื่อเชื่อมต่ออีกครั้ง`,
               }
             : entry
         )
       );
       toast.error(message);
+    } finally {
+      submittedRef.current.delete(queueId);
     }
   }, []);
 
@@ -213,7 +216,7 @@ export function GenerateQueueProvider({
         userName: input.userName,
         productName: input.productName,
         patternName: input.patternName,
-        status: "processing",
+        status: "pending",
         payload: input.payload,
       };
 
@@ -226,6 +229,10 @@ export function GenerateQueueProvider({
 
   const retryGeneration = useCallback(
     (source: QueueItem) => {
+      if (queue.some((item) => isQueueActive(item) && item.orderNumber === source.orderNumber)) {
+        toast.info("ออเดอร์นี้ยังมีงานที่ไม่เสร็จ กรุณารอหรือยกเลิกงานเดิม");
+        return source.id;
+      }
       const queueId = crypto.randomUUID();
       const startedAt = new Date().toISOString();
       const queueItem: QueueItem = {
@@ -236,7 +243,7 @@ export function GenerateQueueProvider({
         userName: source.userName,
         productName: source.productName,
         patternName: source.patternName,
-        status: "processing",
+        status: "pending",
         payload: source.payload,
       };
 
@@ -245,14 +252,41 @@ export function GenerateQueueProvider({
       void submitGeneration(queueItem);
       return queueId;
     },
-    [submitGeneration]
+    [submitGeneration, queue]
   );
+
+  const reconnectGeneration = useCallback((source: QueueItem) => {
+    if (!source.generationId && !submittedRef.current.has(source.id)) {
+      setQueue((prev) => prev.map((item) => item.id === source.id ? { ...item, connectionError: undefined } : item));
+      void submitGeneration(source);
+    }
+  }, [submitGeneration]);
+
+  const cancelGeneration = useCallback(async (source: QueueItem) => {
+    if (!source.generationId || source.cancelling) return;
+    setQueue((prev) => prev.map((item) => item.id === source.id ? { ...item, cancelling: true } : item));
+    try {
+      const res = await fetch(`/api/generate/${source.generationId}`, { method: "DELETE", signal: AbortSignal.timeout(15_000) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "ยกเลิกไม่สำเร็จ");
+      // The cancellation response confirms the terminal state atomically.
+      setQueue((prev) => prev.map((item) => item.id === source.id ? {
+        ...item, status: "cancelled", completedAt: data.completedAt,
+        warning: undefined, connectionError: undefined, error: "ยกเลิกโดยผู้ใช้",
+      } : item));
+      toast.info("ยกเลิกงานแล้ว คำขอที่ส่งถึง AI แล้วอาจยังประมวลผลต่อ");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "ยกเลิกไม่สำเร็จ");
+    } finally {
+      setQueue((prev) => prev.map((item) => item.id === source.id ? { ...item, cancelling: false } : item));
+    }
+  }, []);
 
   useEffect(() => {
     if (!queueHydrated) return;
 
     for (const item of queue) {
-      if (item.status !== "processing" || item.generationId) continue;
+      if (!isQueueActive(item) || item.generationId || item.connectionError) continue;
       if (submittedRef.current.has(item.id)) continue;
       void submitGeneration(item);
     }
@@ -264,8 +298,10 @@ export function GenerateQueueProvider({
       now,
       enqueueGeneration,
       retryGeneration,
+      cancelGeneration,
+      reconnectGeneration,
     }),
-    [queue, now, enqueueGeneration, retryGeneration]
+    [queue, now, enqueueGeneration, retryGeneration, cancelGeneration, reconnectGeneration]
   );
 
   return (

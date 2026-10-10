@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { Profile } from "@/types/database";
+import { AppVersion } from "@/components/app-version";
 
 const navItems = [
   { href: "/", label: "สร้างรูป" },
@@ -39,8 +40,9 @@ export function MainNav({ profile }: MainNavProps) {
     <header className="border-b border-primary/10 bg-card/80 backdrop-blur-md shadow-sm">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-6">
-          <Link href="/" className="text-xl font-bold brand-gradient-text sm:text-2xl">
-            TR Kids
+          <Link href="/" className="flex shrink-0 flex-col gap-0.5">
+            <span className="text-xl font-bold leading-7 brand-gradient-text sm:text-2xl">TR Kids</span>
+            <AppVersion />
           </Link>
           <nav className="hidden items-center gap-1 sm:flex">
             {navItems.map((item) => (

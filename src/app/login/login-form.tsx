@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AppVersion } from "@/components/app-version";
 
 export function LoginForm() {
   const router = useRouter();
@@ -54,6 +55,7 @@ export function LoginForm() {
     <Card className="w-full max-w-md border-primary/20 shadow-lg shadow-primary/10">
       <CardHeader className="space-y-2 text-center">
         <CardTitle className="text-3xl brand-gradient-text">TR Kids</CardTitle>
+        <AppVersion />
         <CardDescription className="text-base">
           เข้าสู่ระบบเพื่อสร้างรูป AI
         </CardDescription>

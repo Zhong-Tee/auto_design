@@ -1,4 +1,4 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { fillPromptTemplate, fillNamedPlaceholders } from "@/lib/prompt";
@@ -9,11 +9,11 @@ import {
   DEFAULT_GENERATION_WIDTH,
 } from "@/lib/shapes";
 import { sanitizeOrderNumber } from "@/lib/order-filename";
-import { kickGenerationQueue } from "@/lib/generation-queue";
 import { resolveImageModel } from "@/lib/image-models";
 
 const generateSchema = z
   .object({
+    requestId: z.string().uuid(),
     productId: z.string().uuid().optional().nullable(),
     patternId: z.string().uuid().optional().nullable(),
     artStyleId: z.string().uuid().optional().nullable(),
@@ -45,6 +45,7 @@ export async function POST(request: Request) {
     }
 
     const {
+      requestId,
       productId,
       patternId,
       artStyleId,
@@ -54,20 +55,32 @@ export async function POST(request: Request) {
       uploadedImageUrl,
     } = parsed.data;
 
+    // A retried submission with the same id must return the same job, even after completion.
+    const { data: existing, error: lookupError } = await supabase.from("generations")
+      .select("id, status, order_number").eq("user_id", user.id).eq("request_id", requestId).maybeSingle();
+    if (lookupError) {
+      console.error("[queue] request lookup failed; check migration 012", lookupError);
+      throw new Error("ระบบคิวยังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบ");
+    }
+    if (existing) return NextResponse.json({ generationId: existing.id, status: existing.status, orderNumber: existing.order_number });
+
     const sanitizedOrder = sanitizeOrderNumber(orderNumber);
     if (!sanitizedOrder) {
       return NextResponse.json({ error: "กรุณากรอกเลขออเดอร์" }, { status: 400 });
     }
 
-    const { data: activeDuplicate } = await supabase
+    const { data: activeDuplicate, error: duplicateError } = await supabase
       .from("generations")
-      .select("id")
+      .select("id, request_id, status, order_number")
       .eq("user_id", user.id)
       .eq("order_number", sanitizedOrder)
       .in("status", ["pending", "processing"])
       .limit(1);
+    if (duplicateError) throw new Error("ตรวจสอบเลขออเดอร์ไม่สำเร็จ กรุณาลองใหม่");
 
     if (activeDuplicate && activeDuplicate.length > 0) {
+      const sameRequest = activeDuplicate.find((job) => job.request_id === requestId);
+      if (sameRequest) return NextResponse.json({ generationId: sameRequest.id, status: sameRequest.status, orderNumber: sameRequest.order_number });
       return NextResponse.json(
         {
           error: `เลขออเดอร์ "${sanitizedOrder}" กำลังสร้างอยู่แล้ว กรุณาใช้เลขอื่นหรือรอให้เสร็จ`,
@@ -137,16 +150,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: shapeSizeErrors[0] }, { status: 400 });
     }
 
-    const { data: modelRows } = await supabase
+    const { data: modelRows, error: modelError } = await supabase
       .from("app_settings")
       .select("key, value")
       .eq("key", "openai_image_model");
+    if (modelError) throw new Error("โหลดการตั้งค่าสร้างภาพไม่สำเร็จ กรุณาลองใหม่");
 
     const size = `${DEFAULT_GENERATION_WIDTH}x${DEFAULT_GENERATION_HEIGHT}`;
 
     const { data: generation, error: insertError } = await supabase
       .from("generations")
       .insert({
+        request_id: requestId,
         user_id: user.id,
         product_id: productId ?? null,
         pattern_id: patternId ?? null,
@@ -167,15 +182,17 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError || !generation) {
+      if (insertError?.code === "23505") {
+        const { data: duplicate } = await supabase.from("generations").select("id, status, order_number")
+          .eq("user_id", user.id).eq("request_id", requestId).maybeSingle();
+        if (duplicate) return NextResponse.json({ generationId: duplicate.id, status: duplicate.status, orderNumber: duplicate.order_number });
+        return NextResponse.json({ error: "เลขออเดอร์นี้มีงานที่ยังไม่เสร็จ กรุณารอหรือยกเลิกงานเดิม" }, { status: 409 });
+      }
       return NextResponse.json(
         { error: "ไม่สามารถบันทึกการสร้างรูปได้" },
         { status: 500 }
       );
     }
-
-    after(async () => {
-      await kickGenerationQueue();
-    });
 
     return NextResponse.json({
       generationId: generation.id,

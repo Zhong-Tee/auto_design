@@ -1,5 +1,5 @@
 export type UserRole = "admin" | "user";
-export type GenerationStatus = "pending" | "processing" | "success" | "failed";
+export type GenerationStatus = "pending" | "processing" | "success" | "failed" | "cancelled";
 export type ShapeQuality = "low" | "medium" | "high";
 
 export interface Profile {
@@ -110,6 +110,12 @@ export interface Generation {
   processing_started_at: string | null;
   processing_duration_ms: number | null;
   created_at: string;
+  request_id: string | null;
+  worker_token: string | null;
+  heartbeat_at: string | null;
+  processing_step: string | null;
+  attempt_count: number;
+  completed_at: string | null;
 }
 
 export interface PricingSettings {
