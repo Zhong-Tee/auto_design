@@ -2,6 +2,11 @@ import OpenAI, { toFile } from "openai";
 import type { ShapeQuality } from "@/types/database";
 import { extractTokenUsage } from "@/lib/cost";
 import { DEFAULT_IMAGE_MODEL } from "@/lib/image-models";
+import {
+  assertTransparentPng,
+  resolveImageBackground,
+  type ImageBackground,
+} from "@/lib/image-background";
 
 const TIMEOUT_MS = 300_000;
 
@@ -65,6 +70,7 @@ export interface GenerateImageParams {
   height: number;
   quality: ShapeQuality;
   model?: string;
+  background?: ImageBackground;
   inputImageBuffer?: Buffer;
   inputImageMimeType?: string;
 }
@@ -73,6 +79,7 @@ export async function generateImage(params: GenerateImageParams) {
   const openai = getOpenAIClient();
   const size = `${params.width}x${params.height}` as `${number}x${number}`;
   const model = params.model || DEFAULT_IMAGE_MODEL;
+  const background = params.background ?? resolveImageBackground(params.prompt);
 
   const result = await withRetry(async () => {
     if (params.inputImageBuffer) {
@@ -88,6 +95,8 @@ export async function generateImage(params: GenerateImageParams) {
         prompt: params.prompt,
         size,
         quality: params.quality,
+        background,
+        output_format: "png",
       });
     }
 
@@ -96,6 +105,8 @@ export async function generateImage(params: GenerateImageParams) {
       prompt: params.prompt,
       size,
       quality: params.quality,
+      background,
+      output_format: "png",
     });
   });
 
@@ -105,9 +116,13 @@ export async function generateImage(params: GenerateImageParams) {
   }
 
   const usage = extractTokenUsage(result.usage);
+  const imageBuffer = Buffer.from(imageData.b64_json, "base64");
+  if (background === "transparent") {
+    await assertTransparentPng(imageBuffer);
+  }
 
   return {
-    imageBuffer: Buffer.from(imageData.b64_json, "base64"),
+    imageBuffer,
     usage,
     model,
   };

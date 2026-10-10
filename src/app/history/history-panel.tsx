@@ -249,10 +249,8 @@ export function HistoryPanel({ items, profileLabels }: HistoryPanelProps) {
                   </p>
                   {!deleteMode && gen.output_image_url && (
                     <a
-                      href={gen.output_image_url}
+                      href={`/api/generate/${encodeURIComponent(gen.id)}/download`}
                       download={outputFileName ?? undefined}
-                      target="_blank"
-                      rel="noreferrer"
                       className={buttonVariants({
                         size: "sm",
                         variant: "default",

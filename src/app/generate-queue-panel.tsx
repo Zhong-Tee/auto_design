@@ -159,10 +159,8 @@ export function GenerateQueuePanel({
                       </Button>
                       {item.status === "success" && item.result && (
                         <a
-                          href={item.result.outputImageUrl}
+                          href={`/api/generate/${encodeURIComponent(item.result.generationId)}/download`}
                           download={outputFileName}
-                          target="_blank"
-                          rel="noreferrer"
                           className={buttonVariants({ variant: "outline", size: "sm" })}
                         >
                           ดาวน์โหลด

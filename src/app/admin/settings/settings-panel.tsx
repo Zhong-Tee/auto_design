@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { saveSettings } from "./actions";
-import { OPENAI_IMAGE_MODELS } from "@/lib/image-models";
+import {
+  IMAGE_MODEL_PRICING,
+  isOpenAIImageModel,
+  OPENAI_IMAGE_MODELS,
+} from "@/lib/image-models";
 import type { PricingSettings } from "@/types/database";
 
 interface SettingsPanelProps {
@@ -37,10 +41,9 @@ export function SettingsPanel({ settings, imageModel }: SettingsPanelProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [values, setValues] = useState(() => toFormValues(settings, imageModel));
-
-  useEffect(() => {
-    setValues(toFormValues(settings, imageModel));
-  }, [settings, imageModel]);
+  const referencePricing = isOpenAIImageModel(values.openai_image_model)
+    ? IMAGE_MODEL_PRICING[values.openai_image_model]
+    : undefined;
 
   function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,7 +69,16 @@ export function SettingsPanel({ settings, imageModel }: SettingsPanelProps) {
 
       <Alert className="mb-6">
         <AlertDescription>
-          ตรวจสอบราคาล่าสุดจากหน้า OpenAI Pricing แล้วอัปเดตที่นี่
+          ตรวจสอบราคาล่าสุดจากหน้า{" "}
+          <a
+            href="https://developers.openai.com/api/docs/pricing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            OpenAI Pricing
+          </a>{" "}
+          ราคาอ้างอิงของโมเดลใหม่ตรวจสอบเมื่อ 10 ตุลาคม 2026
         </AlertDescription>
       </Alert>
 
@@ -75,12 +87,19 @@ export function SettingsPanel({ settings, imageModel }: SettingsPanelProps) {
           <Label htmlFor="openai-image-model">โมเดลสร้างรูป (OpenAI)</Label>
           <Select
             value={values.openai_image_model}
-            onValueChange={(v) =>
+            onValueChange={(v) => {
+              if (!isOpenAIImageModel(v)) return;
+              // Restore saved rates for legacy models instead of carrying over
+              // a new model's rates when the administrator changes back.
+              const pricing = IMAGE_MODEL_PRICING[v] ?? settings;
               setValues((prev) => ({
                 ...prev,
-                openai_image_model: v ?? prev.openai_image_model,
-              }))
-            }
+                openai_image_model: v,
+                price_text_input_per_1m: String(pricing.price_text_input_per_1m),
+                price_image_input_per_1m: String(pricing.price_image_input_per_1m),
+                price_image_output_per_1m: String(pricing.price_image_output_per_1m),
+              }));
+            }}
           >
             <SelectTrigger id="openai-image-model" className="w-full">
               <SelectValue placeholder="เลือกโมเดล">
@@ -98,6 +117,37 @@ export function SettingsPanel({ settings, imageModel }: SettingsPanelProps) {
           <p className="text-xs text-muted-foreground">
             ใช้กับการสร้างรูปทั้งหมด (ทั้งสร้างรูปและหน้าเด็ก)
           </p>
+          {referencePricing && (
+            <div className="rounded-xl border bg-muted/30 p-3 text-sm" aria-live="polite">
+              <p className="font-medium">ราคาอ้างอิง OpenAI (USD ต่อ 1M tokens)</p>
+              <dl className="mt-2 grid grid-cols-2 gap-1">
+                <dt>Text Input</dt>
+                <dd className="text-right">${referencePricing.price_text_input_per_1m.toFixed(2)}</dd>
+                <dt>Image Input</dt>
+                <dd className="text-right">${referencePricing.price_image_input_per_1m.toFixed(2)}</dd>
+                <dt>Image Output</dt>
+                <dd className="text-right">${referencePricing.price_image_output_per_1m.toFixed(2)}</dd>
+              </dl>
+              <p className="mt-2 text-xs text-muted-foreground">
+                ราคามาตรฐาน ไม่ใช่ราคาต่อรูป เมื่อเลือกโมเดลจะเติมราคาให้อัตโนมัติ
+                สามารถปรับเองได้ แล้วกดบันทึกการตั้งค่าเพื่อใช้งาน
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => setValues((prev) => ({
+                  ...prev,
+                  price_text_input_per_1m: String(referencePricing.price_text_input_per_1m),
+                  price_image_input_per_1m: String(referencePricing.price_image_input_per_1m),
+                  price_image_output_per_1m: String(referencePricing.price_image_output_per_1m),
+                }))}
+              >
+                ใช้ราคาอ้างอิง
+              </Button>
+            </div>
+          )}
         </div>
         <div className="space-y-2">
           <Label>อัตรา USD → THB</Label>
